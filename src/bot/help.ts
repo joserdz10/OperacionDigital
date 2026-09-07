@@ -19,7 +19,7 @@ export const commandMenu = [
   { command: 'ayuda', description: 'Ver todos los comandos' }
 ];
 
-export const helpText = `AI MEDIA NETWORK OPERATOR v0.4
+export const helpText = `AI MEDIA NETWORK OPERATOR v0.4.1
 
 Comandos principales:
 /corrida 6h - Discovery real del periodo

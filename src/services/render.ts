@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { execFile } from 'node:child_process';
+import { execFile, execSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { one } from '../db.js';
 
@@ -199,8 +199,17 @@ export async function renderPiecePng({ story, contentPiece, pieceType }:{ story:
   const pngPath = path.join(tmpDir, `${base}.png`);
   await fs.writeFile(svgPath, svg, 'utf8');
   try {
-    const tool = process.platform === 'win32' ? 'magick' : 'convert';
-    await execFileAsync(tool, [svgPath, pngPath]);
+    const hasMagick = (() => { try { execSync('which magick', { stdio: 'ignore' }); return true; } catch { return false; } })();
+    const hasRsvg = (() => { try { execSync('which rsvg-convert', { stdio: 'ignore' }); return true; } catch { return false; } })();
+
+    if (hasRsvg) {
+      await execFileAsync('rsvg-convert', ['-w', String(parseSize(spec.size).width), '-h', String(parseSize(spec.size).height), '-o', pngPath, svgPath]);
+    } else if (hasMagick) {
+      await execFileAsync('magick', ['convert', svgPath, pngPath]);
+    } else {
+      await execFileAsync('convert', [svgPath, pngPath]);
+    }
+
     const buffer = await fs.readFile(pngPath);
     return { buffer, filename: `${story.story_number}-${pieceType}.png`, spec };
   } finally {
