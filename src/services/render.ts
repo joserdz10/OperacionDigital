@@ -4,214 +4,307 @@ import path from 'node:path';
 import os from 'node:os';
 import { execFile, execSync } from 'node:child_process';
 import { promisify } from 'node:util';
-import { one } from '../db.js';
+import { query } from '../db.js';
 
 const execFileAsync = promisify(execFile);
 
-function escapeXml(input: string) {
-  return String(input || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
-}
-
-function wrapText(text: string, maxChars: number, maxLines = 8) {
+function wrapText(text: string, maxChars: number, maxLines = 6) {
   const words = String(text || '').trim().split(/\s+/).filter(Boolean);
   if (!words.length) return [''];
   const lines: string[] = [];
   let current = '';
   for (const word of words) {
     const candidate = current ? `${current} ${word}` : word;
-    if (candidate.length <= maxChars) {
-      current = candidate;
-    } else {
+    if (candidate.length <= maxChars) current = candidate;
+    else {
       if (current) lines.push(current);
       current = word;
       if (lines.length >= maxLines - 1) break;
     }
   }
   if (current && lines.length < maxLines) lines.push(current);
-  if (lines.length > maxLines) lines.length = maxLines;
-  if (words.join(' ').length > lines.join(' ').length) {
-    const last = lines[lines.length - 1] || '';
-    lines[lines.length - 1] = last.length > 3 ? `${last.slice(0, Math.max(0, last.length - 1))}…` : `${last}…`;
+  const full = words.join(' ');
+  const used = lines.join(' ');
+  if (used.length < full.length && lines.length) {
+    const last = lines[lines.length - 1];
+    lines[lines.length - 1] = `${last.replace(/[.,;:!?-]?$/, '')}…`;
   }
   return lines;
 }
 
 function parseSize(input?: string) {
-  const raw = String(input || '1080x1350');
-  const m = raw.match(/(\d+)\s*x\s*(\d+)/i);
+  const m = String(input || '1080x1350').match(/(\d+)\s*x\s*(\d+)/i);
   return m ? { width: Number(m[1]), height: Number(m[2]) } : { width: 1080, height: 1350 };
 }
 
 function normalizeSpec(raw: any) {
   if (!raw) return {};
   if (typeof raw === 'object') return raw;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return { notes: String(raw) };
-  }
+  try { return JSON.parse(raw); } catch { return { notes: String(raw) }; }
 }
 
-function rect(x:number,y:number,w:number,h:number,fill:string,rx=0,opacity=1) {
-  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}" fill="${fill}" opacity="${opacity}" />`;
-}
-
-function textBlock(lines:string[], x:number, y:number, lineHeight:number, size:number, fill:string, family:string, weight='400', anchor='start') {
-  const safe = lines.map((line, i) => `<text x="${x}" y="${y + i * lineHeight}" font-family="${family}" font-size="${size}" font-weight="${weight}" fill="${fill}" text-anchor="${anchor}">${escapeXml(line)}</text>`);
-  return safe.join('');
-}
-
-function renderSvg({ story, identityName, pieceType, spec, colors }:{ story:any; identityName:string; pieceType:string; spec:any; colors:any; }) {
-  const { width, height } = parseSize(spec.size);
-  const primary = colors?.primary || '#143E3B';
-  const secondary = colors?.secondary || '#F4F0E8';
-  const accent = colors?.accent || '#B9754E';
-  const neutral = colors?.neutral || '#3C3C3C';
-  const title = spec.headline || story.title || 'Sin titular';
-  const sub = spec.subheadline || spec.secondary || spec.notes || story.summary || '';
-  const section = spec.section || inferSection(story.title || 'Nuevo León');
-  const footer = spec.footer || 'INFORMAR CON CONTEXTO';
-
-  const isVertical = height > width * 1.55;
-  const isSquare = Math.abs(width - height) < 50;
-  const serif = 'DejaVu Serif';
-  const sans = 'DejaVu Sans';
-  const margin = isVertical ? 90 : 72;
-  const headerH = isVertical ? 180 : 140;
-  const footerH = isVertical ? 160 : 130;
-  const contentTop = headerH + 40;
-  const contentBottom = height - footerH - 40;
-  const availableH = contentBottom - contentTop;
-
-  let titleSize = isVertical ? 72 : 64;
-  let subSize = isVertical ? 34 : 30;
-  let sectionSize = isVertical ? 30 : 26;
-  if (isSquare) { titleSize = 58; subSize = 28; }
-  if (pieceType === 'breaking') { titleSize += 8; }
-  if (pieceType === 'quote') { titleSize = isVertical ? 54 : 50; }
-
-  const titleLines = wrapText(title, isVertical ? 24 : isSquare ? 22 : 28, pieceType === 'story' || pieceType === 'reel' ? 7 : 6);
-  const subLines = wrapText(sub, isVertical ? 34 : 40, pieceType === 'story' || pieceType === 'reel' ? 5 : 4);
-  const quoteLines = wrapText(spec.quote || '', isVertical ? 23 : 26, 7);
-
-  const defs = `
-    <defs>
-      <linearGradient id="bgGradient" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0%" stop-color="${primary}" />
-        <stop offset="100%" stop-color="#0d2927" />
-      </linearGradient>
-      <linearGradient id="overlayGradient" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="#ffffff" stop-opacity="0.10" />
-        <stop offset="100%" stop-color="#ffffff" stop-opacity="0.02" />
-      </linearGradient>
-    </defs>`;
-
-  let body = '';
-  body += rect(0,0,width,height,'url(#bgGradient)');
-  body += `<circle cx="${width*0.82}" cy="${height*0.18}" r="${Math.round(Math.min(width,height)*0.18)}" fill="${accent}" opacity="0.18" />`;
-  body += `<circle cx="${width*0.18}" cy="${height*0.78}" r="${Math.round(Math.min(width,height)*0.14)}" fill="#ffffff" opacity="0.06" />`;
-  body += rect(0,0,width,height,'url(#overlayGradient)');
-
-  // Top card / header
-  body += rect(margin, 42, width - margin*2, headerH, secondary, 26, 0.98);
-  body += rect(margin, 42, width - margin*2, 10, accent, 10, 1);
-  body += textBlock(['NORTE EN ALERTA'], margin + 36, 108, 46, isVertical ? 44 : 40, primary, serif, '700');
-  body += textBlock(['NUEVO LEÓN'], width - margin - 36, 100, 40, isVertical ? 24 : 22, accent, sans, '700', 'end');
-  body += rect(margin + 36, headerH - 14 + 42, 200, 44, accent, 22, 1);
-  body += textBlock([section.toUpperCase()], margin + 136, headerH + 17 + 42, 0, sectionSize, secondary, sans, '700', 'middle');
-
-  if (pieceType === 'quote') {
-    body += textBlock(['“'], margin + 4, contentTop + 64, 0, 160, secondary, serif, '700');
-    body += textBlock(quoteLines.length ? quoteLines : titleLines, margin + 70, contentTop + 90, 68, titleSize, secondary, serif, '700');
-    if (spec.attribution) {
-      body += textBlock([`— ${spec.attribution}`], margin + 72, contentTop + 90 + quoteLines.length * 68 + 50, 0, 30, accent, sans, '700');
-    }
-  } else if (pieceType === 'carousel') {
-    body += textBlock(titleLines, margin, contentTop + 50, 82, titleSize, secondary, serif, '700');
-    body += textBlock(subLines.length ? subLines : ['Desliza para conocer las claves.'], margin, contentTop + 50 + titleLines.length*82 + 42, 42, subSize, secondary, sans, '400');
-    const slides = Array.isArray(spec.slides) ? spec.slides.slice(0, 3) : [];
-    const boxY = contentBottom - 320;
-    const gap = 26;
-    const boxW = (width - margin*2 - gap*2) / 3;
-    slides.forEach((s:any, idx:number) => {
-      const x = margin + idx * (boxW + gap);
-      body += rect(x, boxY, boxW, 220, secondary, 22, 0.95);
-      body += rect(x, boxY, boxW, 8, accent, 8, 1);
-      body += textBlock([String(idx+1).padStart(2,'0')], x + 30, boxY + 62, 0, 26, accent, sans, '700');
-      body += textBlock(wrapText(s.headline || `Clave ${idx+1}`, 16, 3), x + 30, boxY + 112, 38, 28, primary, serif, '700');
-    });
-  } else {
-    body += textBlock(titleLines, margin, contentTop + 60, isVertical ? 84 : 74, titleSize, secondary, serif, '700');
-    const subY = contentTop + 60 + titleLines.length * (isVertical ? 84 : 74) + 34;
-    if (subLines.length && String(subLines[0]).trim()) {
-      body += textBlock(subLines, margin, subY, isVertical ? 46 : 42, subSize, secondary, sans, '400');
-    }
-    if (pieceType === 'story' || pieceType === 'reel') {
-      const cta = spec.cta || (pieceType === 'reel' ? 'Mira el video completo' : 'Conoce los detalles');
-      body += rect(margin, contentBottom - 130, width - margin*2, 86, accent, 24, 1);
-      body += textBlock([cta.toUpperCase()], width/2, contentBottom - 74, 0, 30, secondary, sans, '700', 'middle');
-    }
-    if (pieceType === 'breaking') {
-      body += rect(width - margin - 220, contentTop + 10, 220, 52, accent, 26, 1);
-      body += textBlock(['ALERTA'], width - margin - 110, contentTop + 45, 0, 28, secondary, sans, '700', 'middle');
-    }
-  }
-
-  // Footer
-  body += rect(0, height - footerH, width, footerH, secondary, 0, 1);
-  body += rect(0, height - footerH, width, 8, accent, 0, 1);
-  body += textBlock(['NORTE EN ALERTA'], margin, height - footerH + 58, 0, 34, primary, serif, '700');
-  body += textBlock([footer], margin, height - footerH + 98, 0, 20, neutral, sans, '700');
-  body += textBlock(['INFORMAMOS CON RAÍZ · CONTAMOS LO QUE IMPORTA'], width - margin, height - footerH + 60, 0, 22, accent, sans, '700', 'end');
-  body += textBlock([new Date().toLocaleDateString('es-MX', { year:'numeric', month:'short', day:'numeric' })], width - margin, height - footerH + 96, 0, 18, neutral, sans, '400', 'end');
-
-  return `<?xml version="1.0" encoding="UTF-8"?>
-  <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
-    ${defs}
-    ${body}
-  </svg>`;
-}
-
-function inferSection(title:string) {
+function inferSection(title: string) {
   const t = String(title || '').toLowerCase();
-  if (/metro|movilidad|transporte|viaducto|línea|linea/.test(t)) return 'Movilidad';
-  if (/lluvia|clima|tormenta|inund/.test(t)) return 'Clima';
-  if (/cateo|fiscal[ií]a|seguridad|fuerza civil|delito/.test(t)) return 'Seguridad';
-  if (/sheinbaum|gobierno|samuel|congreso|federal/.test(t)) return 'Política';
-  if (/inversi[oó]n|industria|empresa|empleo/.test(t)) return 'Economía';
-  return 'Nuevo León';
+  if (/metro|movilidad|transporte|viaducto|línea|linea|gonzalitos/.test(t)) return 'MOVILIDAD';
+  if (/lluvia|clima|tormenta|inund/.test(t)) return 'PROTECCIÓN CIVIL';
+  if (/cateo|fiscal[ií]a|seguridad|fuerza civil|delito|homicidio|robo/.test(t)) return 'SEGURIDAD';
+  if (/sheinbaum|gobierno|samuel|congreso|federal|alcald/.test(t)) return 'POLÍTICA';
+  if (/inversi[oó]n|industria|empresa|empleo|nearshoring/.test(t)) return 'ECONOMÍA';
+  return 'NUEVO LEÓN';
+}
+
+function hasCommand(name: string) {
+  try { execSync(`which ${name}`, { stdio: 'ignore' }); return true; } catch { return false; }
+}
+
+function imageMagickCommand() {
+  return hasCommand('magick') ? 'magick' : 'convert';
+}
+
+function blockedHostname(hostname: string) {
+  const h = hostname.toLowerCase();
+  if (h === 'localhost' || h.endsWith('.local')) return true;
+  if (/^127\./.test(h) || /^10\./.test(h) || /^192\.168\./.test(h) || /^169\.254\./.test(h)) return true;
+  const m = h.match(/^172\.(\d+)\./);
+  if (m && Number(m[1]) >= 16 && Number(m[1]) <= 31) return true;
+  return false;
+}
+
+function safeHttpUrl(value: string | null | undefined) {
+  if (!value) return null;
+  try {
+    const u = new URL(value);
+    if (!['http:', 'https:'].includes(u.protocol) || blockedHostname(u.hostname)) return null;
+    return u;
+  } catch { return null; }
+}
+
+function extractMetaImage(html: string, baseUrl: string) {
+  const patterns = [
+    /<meta[^>]+property=["']og:image(?::secure_url)?["'][^>]+content=["']([^"']+)["'][^>]*>/i,
+    /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image(?::secure_url)?["'][^>]*>/i,
+    /<meta[^>]+name=["']twitter:image(?::src)?["'][^>]+content=["']([^"']+)["'][^>]*>/i,
+    /<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:image(?::src)?["'][^>]*>/i,
+  ];
+  for (const re of patterns) {
+    const m = html.match(re);
+    if (m?.[1]) {
+      try { return new URL(m[1].replace(/&amp;/g, '&'), baseUrl).toString(); } catch { /* noop */ }
+    }
+  }
+  return null;
+}
+
+async function fetchSourceImage(storyId: string, tmpDir: string) {
+  const sources = await query<any>(
+    `SELECT source_name, source_url, source_tier, is_primary
+     FROM story_sources WHERE story_id=$1
+     ORDER BY is_primary DESC, CASE source_tier WHEN 'A' THEN 1 WHEN 'B' THEN 2 ELSE 3 END, source_name
+     LIMIT 6`,
+    [storyId]
+  );
+
+  for (const source of sources) {
+    const pageUrl = safeHttpUrl(source.source_url);
+    if (!pageUrl) continue;
+    try {
+      const pageRes = await fetch(pageUrl, {
+        redirect: 'follow',
+        signal: AbortSignal.timeout(7000),
+        headers: { 'user-agent': 'Mozilla/5.0 AI-Media-Network-Operator/0.5' }
+      });
+      if (!pageRes.ok) continue;
+      const type = pageRes.headers.get('content-type') || '';
+      if (!type.includes('text/html')) continue;
+      const html = (await pageRes.text()).slice(0, 2_000_000);
+      const imageUrlText = extractMetaImage(html, pageUrl.toString());
+      const imageUrl = safeHttpUrl(imageUrlText);
+      if (!imageUrl) continue;
+
+      const imageRes = await fetch(imageUrl, {
+        redirect: 'follow',
+        signal: AbortSignal.timeout(9000),
+        headers: { 'user-agent': 'Mozilla/5.0 AI-Media-Network-Operator/0.5', accept: 'image/*' }
+      });
+      if (!imageRes.ok) continue;
+      const imageType = imageRes.headers.get('content-type') || '';
+      if (!imageType.startsWith('image/') || imageType.includes('svg')) continue;
+      const ab = await imageRes.arrayBuffer();
+      if (ab.byteLength < 10_000 || ab.byteLength > 10_000_000) continue;
+      const ext = imageType.includes('png') ? 'png' : imageType.includes('webp') ? 'webp' : 'jpg';
+      const file = path.join(tmpDir, `source.${ext}`);
+      await fs.writeFile(file, Buffer.from(ab));
+      return { file, sourceName: source.source_name, sourceUrl: pageUrl.toString() };
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+function fallbackImagePath() {
+  return path.join(process.cwd(), 'assets', 'nea-fallback-monterrey.jpg');
+}
+
+async function runMagick(args: string[]) {
+  const cmd = imageMagickCommand();
+  if (cmd === 'magick') await execFileAsync(cmd, args);
+  else await execFileAsync(cmd, args.slice(1));
+}
+
+function brandColors() {
+  return {
+    green: '#0E3D3A',
+    ivory: '#F7F4EC',
+    copper: '#BB734A',
+    ink: '#10262A',
+    muted: '#5B6164',
+    red: '#D71920',
+  };
+}
+
+async function makePhotoBase(photoPath: string, outPath: string, width: number, height: number) {
+  await runMagick([
+    'convert', photoPath,
+    '-auto-orient',
+    '-resize', `${width}x${height}^`,
+    '-gravity', 'center',
+    '-extent', `${width}x${height}`,
+    '-quality', '92',
+    outPath,
+  ]);
+}
+
+async function renderStoryLike(photoPath: string, outPath: string, story: any, spec: any, pieceType: string, sourceName: string) {
+  const c = brandColors();
+  const { width, height } = parseSize(spec.size || '1080x1920');
+  const bg = `${outPath}.bg.jpg`;
+  await makePhotoBase(photoPath, bg, width, height);
+
+  const title = wrapText(spec.headline || story.title, 23, 6).join('\n');
+  const secondary = wrapText(spec.secondary || spec.subheadline || story.summary || '', 39, 4).join('\n');
+  const section = spec.section || inferSection(story.title);
+  const label = pieceType === 'breaking' ? 'ÚLTIMA HORA' : `${section}`;
+  const location = 'NUEVO LEÓN';
+  const source = sourceName ? `Fuente: ${sourceName}` : 'Fuente: AI Media Network';
+
+  const args = [
+    'convert', bg,
+    // dark gradient for text readability
+    '(', '-size', `${width}x${height}`, 'gradient:rgba(6,24,24,0.00)-rgba(6,24,24,0.92)', ')', '-gravity', 'south', '-compose', 'over', '-composite',
+    '-fill', 'rgba(8,42,40,0.55)', '-draw', `rectangle 0,0 ${width},210`,
+    '-fill', c.ivory, '-font', 'DejaVu-Serif-Bold', '-pointsize', '62', '-gravity', 'northwest', '-annotate', '+70+48', 'Norte\nEn Alerta',
+    '-fill', c.copper, '-font', 'DejaVu-Sans-Bold', '-pointsize', '26', '-gravity', 'northeast', '-annotate', '+70+62', 'NUEVO LEÓN,\nCON CONTEXTO.',
+    '-fill', c.copper, '-draw', `rectangle 70,190 160,198`,
+    '-fill', c.ivory, '-font', 'DejaVu-Sans-Bold', '-pointsize', '28', '-gravity', 'southwest', '-annotate', '+70+760', `${location}  |  ${label}`,
+    '-fill', c.ivory, '-font', 'DejaVu-Serif-Bold', '-pointsize', pieceType === 'reel' ? '66' : '72', '-interline-spacing', '-7', '-gravity', 'southwest', '-annotate', '+70+430', title,
+    '-fill', c.ivory, '-font', 'DejaVu-Sans', '-pointsize', '31', '-interline-spacing', '5', '-gravity', 'southwest', '-annotate', '+72+250', secondary,
+    '-fill', c.copper, '-draw', `rectangle 72,${height - 185} 190,${height - 176}`,
+    '-fill', c.ivory, '-font', 'DejaVu-Sans', '-pointsize', '19', '-gravity', 'southwest', '-annotate', '+72+108', source,
+    '-fill', c.ivory, '-font', 'DejaVu-Sans-Bold', '-pointsize', '20', '-gravity', 'southeast', '-annotate', '+70+108', 'NORTE EN ALERTA',
+    '-quality', '94', outPath,
+  ];
+  await runMagick(args);
+  await fs.rm(bg, { force: true });
+}
+
+async function renderFeed(photoPath: string, outPath: string, story: any, spec: any, pieceType: string, sourceName: string) {
+  const c = brandColors();
+  const { width, height } = parseSize(spec.size || '1080x1350');
+  const canvas = `${outPath}.canvas.png`;
+  const photo = `${outPath}.photo.jpg`;
+  const headerH = Math.round(height * 0.15);
+  const photoH = Math.round(height * 0.43);
+  const photoY = headerH;
+  const textY = photoY + photoH;
+  const footerH = Math.round(height * 0.11);
+  const bodyBottom = height - footerH;
+  await makePhotoBase(photoPath, photo, width, photoH);
+
+  await runMagick(['convert', '-size', `${width}x${height}`, `xc:${c.ivory}`, canvas]);
+  await runMagick(['convert', canvas, photo, '-gravity', 'north', '-geometry', `+0+${photoY}`, '-compose', 'over', '-composite', canvas]);
+
+  const title = wrapText(spec.headline || story.title, 26, 4).join('\n');
+  const secondary = wrapText(spec.subheadline || spec.secondary || story.summary || '', 53, 3).join('\n');
+  const section = spec.section || inferSection(story.title);
+  const category = `NUEVO LEÓN  |  ${section}`;
+  const breaking = pieceType === 'breaking';
+  const source = sourceName ? `FUENTE: ${sourceName}` : 'FUENTE: AI MEDIA NETWORK';
+
+  const args = [
+    'convert', canvas,
+    '-fill', c.ink, '-font', 'DejaVu-Serif-Bold', '-pointsize', '56', '-gravity', 'northwest', '-annotate', '+54+38', 'Norte\nEn Alerta',
+    '-fill', c.copper, '-draw', `rectangle 56,${headerH - 35} 142,${headerH - 27}`,
+    '-fill', c.muted, '-font', 'DejaVu-Sans-Bold', '-pointsize', '19', '-gravity', 'northeast', '-annotate', '+55+55', 'SERIO  •  CONFIABLE\nEDITORIAL  •  REGIONAL',
+    '-fill', c.ink, '-font', 'DejaVu-Sans-Bold', '-pointsize', '23', '-gravity', 'northwest', '-annotate', `+58+${textY + 34}`, category,
+  ];
+
+  if (breaking) {
+    args.push('-fill', c.red, '-draw', `roundrectangle 58,${textY + 74} 330,${textY + 132} 5,5`);
+    args.push('-fill', c.ivory, '-font', 'DejaVu-Sans-Bold', '-pointsize', '26', '-gravity', 'northwest', '-annotate', `+82+${textY + 88}`, 'ÚLTIMA HORA');
+  }
+
+  const titleOffset = breaking ? 155 : 95;
+  args.push(
+    '-fill', c.ink, '-font', 'DejaVu-Serif-Bold', '-pointsize', '58', '-interline-spacing', '-7', '-gravity', 'northwest', '-annotate', `+56+${textY + titleOffset}`, title,
+    '-fill', '#2D3A3E', '-font', 'DejaVu-Sans', '-pointsize', '26', '-interline-spacing', '4', '-gravity', 'southwest', '-annotate', `+58+${footerH + 55}`, secondary,
+    '-fill', c.copper, '-draw', `rectangle 58,${bodyBottom - 42} 150,${bodyBottom - 34}`,
+    '-fill', c.muted, '-font', 'DejaVu-Sans-Bold', '-pointsize', '15', '-gravity', 'southwest', '-annotate', `+58+${footerH + 20}`, source,
+    '-fill', c.green, '-draw', `rectangle 0,${bodyBottom} ${width},${height}`,
+    '-fill', c.ivory, '-font', 'DejaVu-Serif-Bold', '-pointsize', '32', '-gravity', 'southwest', '-annotate', '+55+50', 'Norte En Alerta',
+    '-fill', c.ivory, '-font', 'DejaVu-Sans-Bold', '-pointsize', '18', '-gravity', 'south', '-annotate', '+0+53', 'SERIO  •  CONFIABLE  •  EDITORIAL  •  REGIONAL',
+    '-fill', c.copper, '-font', 'DejaVu-Sans-Bold', '-pointsize', '16', '-gravity', 'southeast', '-annotate', '+55+53', 'NUEVO LEÓN, SIEMPRE DA TEMA.',
+    '-quality', '94', outPath,
+  );
+
+  await runMagick(args);
+  await fs.rm(canvas, { force: true });
+  await fs.rm(photo, { force: true });
+}
+
+async function renderQuote(outPath: string, story: any, spec: any) {
+  const c = brandColors();
+  const { width, height } = parseSize(spec.size || '1080x1350');
+  const quote = wrapText(spec.quote || spec.headline || story.title, 25, 8).join('\n');
+  const attribution = wrapText(spec.attribution || '', 36, 2).join('\n');
+  await runMagick([
+    'convert', '-size', `${width}x${height}`, `xc:${c.ivory}`,
+    '-fill', c.green, '-draw', `rectangle 0,0 ${width},175`,
+    '-fill', c.ivory, '-font', 'DejaVu-Serif-Bold', '-pointsize', '48', '-gravity', 'northwest', '-annotate', '+55+42', 'Norte En Alerta',
+    '-fill', c.copper, '-font', 'DejaVu-Serif-Bold', '-pointsize', '150', '-gravity', 'northwest', '-annotate', '+55+220', '“',
+    '-fill', c.ink, '-font', 'DejaVu-Serif-Bold', '-pointsize', '58', '-interline-spacing', '-6', '-gravity', 'center', '-annotate', '+0-40', quote,
+    '-fill', c.copper, '-font', 'DejaVu-Sans-Bold', '-pointsize', '25', '-gravity', 'southwest', '-annotate', '+60+145', attribution,
+    '-fill', c.green, '-draw', `rectangle 0,${height - 100} ${width},${height}`,
+    '-fill', c.ivory, '-font', 'DejaVu-Sans-Bold', '-pointsize', '18', '-gravity', 'south', '-annotate', '+0+38', 'NUEVO LEÓN, CON CONTEXTO.',
+    outPath,
+  ]);
 }
 
 export async function renderPiecePng({ story, contentPiece, pieceType }:{ story:any; contentPiece:any; pieceType:string; }) {
   const spec = normalizeSpec(contentPiece.body);
-  const visualDna = await one<any>('SELECT colors FROM visual_dna WHERE identity_id=$1 AND is_current=true ORDER BY version DESC LIMIT 1', [story.identity_id]);
-  const colors = visualDna?.colors || {};
-  const svg = renderSvg({ story, identityName: story.identity_name || 'Norte En Alerta', pieceType, spec, colors });
-
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'aimn-render-'));
-  const base = randomUUID();
-  const svgPath = path.join(tmpDir, `${base}.svg`);
-  const pngPath = path.join(tmpDir, `${base}.png`);
-  await fs.writeFile(svgPath, svg, 'utf8');
+  const outPath = path.join(tmpDir, `${randomUUID()}.png`);
   try {
-    const hasMagick = (() => { try { execSync('which magick', { stdio: 'ignore' }); return true; } catch { return false; } })();
-    const hasRsvg = (() => { try { execSync('which rsvg-convert', { stdio: 'ignore' }); return true; } catch { return false; } })();
+    const fetched = await fetchSourceImage(story.id, tmpDir);
+    const photoPath = fetched?.file || fallbackImagePath();
+    const sourceName = fetched?.sourceName || 'Imagen editorial de referencia';
 
-    if (hasRsvg) {
-      await execFileAsync('rsvg-convert', ['-w', String(parseSize(spec.size).width), '-h', String(parseSize(spec.size).height), '-o', pngPath, svgPath]);
-    } else if (hasMagick) {
-      await execFileAsync('magick', ['convert', svgPath, pngPath]);
+    if (pieceType === 'story' || pieceType === 'reel') {
+      await renderStoryLike(photoPath, outPath, story, spec, pieceType, sourceName);
+    } else if (pieceType === 'quote') {
+      await renderQuote(outPath, story, spec);
     } else {
-      await execFileAsync('convert', [svgPath, pngPath]);
+      await renderFeed(photoPath, outPath, story, spec, pieceType, sourceName);
     }
 
-    const buffer = await fs.readFile(pngPath);
-    return { buffer, filename: `${story.story_number}-${pieceType}.png`, spec };
+    const buffer = await fs.readFile(outPath);
+    return {
+      buffer,
+      filename: `${story.story_number}-${pieceType}.png`,
+      spec,
+      imageSource: fetched ? { name: fetched.sourceName, url: fetched.sourceUrl } : null,
+      usedFallback: !fetched,
+    };
   } finally {
     await fs.rm(tmpDir, { recursive: true, force: true });
   }

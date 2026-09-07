@@ -96,19 +96,16 @@ async function sendPieceSpec(ctx: Context, story: any, requestedType?: string | 
 
   try {
     const rendered = await renderPiecePng({ story, contentPiece: cp, pieceType: pieceType.key });
+    const photoNote = rendered.imageSource
+      ? `\nFoto obtenida de: ${rendered.imageSource.name}`
+      : `\nFoto: fondo editorial de respaldo (no se encontró imagen utilizable en la fuente).`;
     await ctx.replyWithPhoto(new InputFile(rendered.buffer, rendered.filename), {
       caption:
-        `PIEZA GENERADA #${story.story_number}\n` +
-        `Tipo: ${pieceType.label}\n` +
-        `Tamaño: ${pieceType.size}\n` +
-        `${cp.headline || story.title}`,
+        `PIEZA #${story.story_number} · ${pieceType.label}\n` +
+        `${pieceType.size}\n` +
+        `${cp.headline || story.title}${photoNote}`,
       reply_markup: pieceKeyboard(story.story_number)
     });
-    await ctx.reply(
-      `SPEC #${story.story_number}\n` +
-      `${cp.body}`,
-      { reply_markup: pieceKeyboard(story.story_number) }
-    );
   } catch (error: any) {
     await ctx.reply(
       `No pude renderizar la pieza automáticamente.\n\n` +
