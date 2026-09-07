@@ -30,7 +30,7 @@ async function main() {
 
   const app = express();
   app.use(express.json({ limit: '2mb' }));
-  app.get('/health', (_req, res) => res.json({ ok: true, service: 'ai-media-network-operator', version: '0.1.0' }));
+  app.get('/health', (_req, res) => res.json({ ok: true, service: 'ai-media-network-operator', version: '0.4.0' }));
 
   if (env.botMode === 'webhook') {
     if (!env.publicBaseUrl || !env.webhookSecret) throw new Error('PUBLIC_BASE_URL and TELEGRAM_WEBHOOK_SECRET are required in webhook mode.');

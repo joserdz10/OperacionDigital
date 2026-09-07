@@ -15,11 +15,11 @@ export const commandMenu = [
   { command: 'identidad', description: 'Cambiar identidad editorial' },
   { command: 'estado_actual', description: 'Ver contexto operativo' },
   { command: 'whoami', description: 'Mostrar tu Telegram chat id' },
-  { command: 'pieza', description: 'Preparar especificacion grafica' },
+  { command: 'pieza', description: 'Elegir tipo de pieza grafica' },
   { command: 'ayuda', description: 'Ver todos los comandos' }
 ];
 
-export const helpText = `AI MEDIA NETWORK OPERATOR v0.2
+export const helpText = `AI MEDIA NETWORK OPERATOR v0.4
 
 Comandos principales:
 /corrida 6h - Discovery real del periodo
@@ -44,6 +44,13 @@ Inteligencia:
 
 Produccion:
 /ready
-/pieza 12 4:5
+/pieza 12 - abre selector de formato
+/pieza 12 fb - post Facebook/IG 1080x1350
+/pieza 12 story - story 1080x1920
+/pieza 12 reel - reel cover 1080x1920
+/pieza 12 square - post 1080x1080
+/pieza 12 breaking - urgente 1080x1350
+/pieza 12 quote - cita 1080x1350
+/pieza 12 carousel - carrusel 1080x1350 por slide
 
 Tambien puedes escribir instrucciones en lenguaje natural.`;
