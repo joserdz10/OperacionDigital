@@ -148,8 +148,20 @@ function fallbackImagePath() {
 
 async function runMagick(args: string[]) {
   const cmd = imageMagickCommand();
-  if (cmd === 'magick') await execFileAsync(cmd, args);
-  else await execFileAsync(cmd, args.slice(1));
+  // All callers use the legacy first token "convert". ImageMagick 7 expects
+  // `magick <args>` while ImageMagick 6 expects `convert <args>`.
+  const normalized = args[0] === 'convert' ? args.slice(1) : args;
+  await execFileAsync(cmd, normalized);
+}
+
+async function prepareSourceImage(photoPath: string, tmpDir: string) {
+  if (!/\.webp$/i.test(photoPath)) return photoPath;
+  if (!hasCommand('dwebp')) {
+    throw new Error('WebP decoder dwebp is not installed in the container');
+  }
+  const decoded = path.join(tmpDir, `decoded-${randomUUID()}.png`);
+  await execFileAsync('dwebp', [photoPath, '-o', decoded]);
+  return decoded;
 }
 
 function brandColors() {
@@ -286,8 +298,21 @@ export async function renderPiecePng({ story, contentPiece, pieceType }:{ story:
   const outPath = path.join(tmpDir, `${randomUUID()}.png`);
   try {
     const fetched = await fetchSourceImage(story.id, tmpDir);
-    const photoPath = fetched?.file || fallbackImagePath();
-    const sourceName = fetched?.sourceName || 'Imagen editorial de referencia';
+    let photoPath = fallbackImagePath();
+    let sourceName = 'Imagen editorial de referencia';
+    let imageSource: { name: string; url: string } | null = null;
+    let usedFallback = true;
+
+    if (fetched) {
+      try {
+        photoPath = await prepareSourceImage(fetched.file, tmpDir);
+        sourceName = fetched.sourceName;
+        imageSource = { name: fetched.sourceName, url: fetched.sourceUrl };
+        usedFallback = false;
+      } catch (error) {
+        console.warn('Source image could not be decoded; using fallback image instead.', error);
+      }
+    }
 
     if (pieceType === 'story' || pieceType === 'reel') {
       await renderStoryLike(photoPath, outPath, story, spec, pieceType, sourceName);
@@ -302,8 +327,8 @@ export async function renderPiecePng({ story, contentPiece, pieceType }:{ story:
       buffer,
       filename: `${story.story_number}-${pieceType}.png`,
       spec,
-      imageSource: fetched ? { name: fetched.sourceName, url: fetched.sourceUrl } : null,
-      usedFallback: !fetched,
+      imageSource,
+      usedFallback,
     };
   } finally {
     await fs.rm(tmpDir, { recursive: true, force: true });

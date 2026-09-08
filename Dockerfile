@@ -9,7 +9,7 @@ FROM node:20-alpine
 WORKDIR /app
 ENV NODE_ENV=production
 COPY package*.json ./
-RUN apk add --no-cache imagemagick fontconfig ttf-dejavu \
+RUN apk add --no-cache imagemagick libwebp-tools fontconfig ttf-dejavu \
     && npm install --omit=dev
 COPY --from=build /app/dist ./dist
 COPY db ./db

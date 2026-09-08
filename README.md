@@ -115,3 +115,9 @@ No code should be written specifically for Nuevo Leon. State-specific behavior b
 - Use `TELEGRAM_ALLOWED_CHAT_IDS` while the bot is private.
 - Do not enable automatic publishing in this MVP.
 - Rotate a Telegram token immediately if it is ever exposed.
+
+
+## v0.5.1
+- Instala `libwebp-tools` en Railway para decodificar imágenes WebP (`dwebp`).
+- Decodifica WebP explícitamente antes del render.
+- Corrige la invocación de ImageMagick 7 para evitar `magick convert`.
