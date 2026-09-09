@@ -19,6 +19,19 @@ async function replyChunks(ctx: Context, text: string) {
   for (const chunk of chunkText(text)) await ctx.reply(chunk);
 }
 
+async function safeAnswerCallbackQuery(ctx: Context, options?: Parameters<Context["answerCallbackQuery"]>[0]) {
+  try {
+    await ctx.answerCallbackQuery(options as any);
+  } catch (e: any) {
+    const msg = String(e?.description || e?.message || '');
+    if (/query is too old|response timeout expired|query ID is invalid/i.test(msg)) {
+      console.warn('Ignoring stale callback query:', msg);
+      return;
+    }
+    throw e;
+  }
+}
+
 type PieceOption = {
   key: string;
   label: string;
@@ -312,14 +325,14 @@ export function registerCommands(bot: Bot) {
   });
 
   bot.callbackQuery('inbox', async (ctx) => {
-    await ctx.answerCallbackQuery();
+    await safeAnswerCallbackQuery(ctx);
     const session = await getSession(ctx.chat!.id);
     const rows = await inbox(session.identity_code, 10);
     await ctx.reply(rows.map((r: any) => `#${r.story_number} ${r.priority_label} ${pct(r.relevance_score)}\n${r.title}`).join('\n\n') || 'Inbox vacio.');
   });
 
   bot.callbackQuery(/^generate:(\d+):(.+)$/, async (ctx) => {
-    await ctx.answerCallbackQuery({ text: 'Generando...' });
+    await safeAnswerCallbackQuery(ctx, { text: 'Generando...' });
     const [, ref, kind] = ctx.match as RegExpMatchArray;
     const session = await getSession(ctx.chat!.id);
     const story = await findStory(session.identity_code, ref, session.last_story_id);
@@ -335,7 +348,7 @@ export function registerCommands(bot: Bot) {
 
   bot.callbackQuery(/^piece:(\d+):(.+)$/, async (ctx) => {
     const [, ref, format] = ctx.match as RegExpMatchArray;
-    await ctx.answerCallbackQuery({ text: 'Abriendo pieza...' });
+    await safeAnswerCallbackQuery(ctx, { text: 'Abriendo pieza...' });
     const session = await getSession(ctx.chat!.id);
     const story = await findStory(session.identity_code, ref, session.last_story_id);
     if (!story) return ctx.reply('Story no encontrada.');
