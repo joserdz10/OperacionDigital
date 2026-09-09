@@ -26,11 +26,14 @@ async function main() {
     await initializeDatabase();
   }
   await db.query('SELECT 1');
+  // Required when using bot.handleUpdate() directly in webhook mode.
+  // bot.start() initializes automatically in polling mode, but webhook mode does not.
+  await bot.init();
   await bot.api.setMyCommands(commandMenu);
 
   const app = express();
   app.use(express.json({ limit: '2mb' }));
-  app.get('/health', (_req, res) => res.json({ ok: true, service: 'ai-media-network-operator', version: '0.5.2' }));
+  app.get('/health', (_req, res) => res.json({ ok: true, service: 'ai-media-network-operator', version: '0.5.3' }));
 
   if (env.botMode === 'webhook') {
     if (!env.publicBaseUrl || !env.webhookSecret) throw new Error('PUBLIC_BASE_URL and TELEGRAM_WEBHOOK_SECRET are required in webhook mode.');
@@ -41,7 +44,7 @@ async function main() {
         await bot.handleUpdate(req.body);
         res.sendStatus(200);
       } catch (e) {
-        console.error(e);
+        console.error('Webhook update failed', e);
         res.sendStatus(500);
       }
     });
