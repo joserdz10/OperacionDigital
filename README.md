@@ -121,3 +121,12 @@ No code should be written specifically for Nuevo Leon. State-specific behavior b
 - Instala `libwebp-tools` en Railway para decodificar imágenes WebP (`dwebp`).
 - Decodifica WebP explícitamente antes del render.
 - Corrige la invocación de ImageMagick 7 para evitar `magick convert`.
+
+## v0.5.2
+- Integra los assets oficiales de Norte En Alerta: logotipo completo e isotipo.
+- Fija canvases por tipo de pieza: FB/IG 1080x1350, Story/Reel 1080x1920, Square 1080x1080.
+- Usa plantillas independientes por formato y zonas seguras específicas.
+- Story/Reel: foto full bleed, logotipo oficial superior, kicker territorial/editorial, titular, bajada, fuente e isotipo.
+- Feed: header editorial con logotipo oficial, foto, kicker, titular, bajada, fuente y footer compacto.
+- Corrige etiquetas duplicadas como `NUEVO LEÓN | NUEVO LEÓN`; ahora intenta usar municipio + sección, por ejemplo `APODACA | SEGURIDAD`.
+- Mantiene compatibilidad con Stories ya generadas: si `location` o `section` no existen en la spec, el renderer los infiere del Story.

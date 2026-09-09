@@ -8,6 +8,8 @@ import { query } from '../db.js';
 
 const execFileAsync = promisify(execFile);
 
+type CanvasSize = { width: number; height: number };
+
 function wrapText(text: string, maxChars: number, maxLines = 6) {
   const words = String(text || '').trim().split(/\s+/).filter(Boolean);
   if (!words.length) return [''];
@@ -32,25 +34,55 @@ function wrapText(text: string, maxChars: number, maxLines = 6) {
   return lines;
 }
 
-function parseSize(input?: string) {
-  const m = String(input || '1080x1350').match(/(\d+)\s*x\s*(\d+)/i);
-  return m ? { width: Number(m[1]), height: Number(m[2]) } : { width: 1080, height: 1350 };
-}
-
 function normalizeSpec(raw: any) {
   if (!raw) return {};
   if (typeof raw === 'object') return raw;
   try { return JSON.parse(raw); } catch { return { notes: String(raw) }; }
 }
 
-function inferSection(title: string) {
-  const t = String(title || '').toLowerCase();
-  if (/metro|movilidad|transporte|viaducto|línea|linea|gonzalitos/.test(t)) return 'MOVILIDAD';
-  if (/lluvia|clima|tormenta|inund/.test(t)) return 'PROTECCIÓN CIVIL';
-  if (/cateo|fiscal[ií]a|seguridad|fuerza civil|delito|homicidio|robo/.test(t)) return 'SEGURIDAD';
-  if (/sheinbaum|gobierno|samuel|congreso|federal|alcald/.test(t)) return 'POLÍTICA';
-  if (/inversi[oó]n|industria|empresa|empleo|nearshoring/.test(t)) return 'ECONOMÍA';
+function canvasFor(pieceType: string): CanvasSize {
+  if (pieceType === 'story' || pieceType === 'reel') return { width: 1080, height: 1920 };
+  if (pieceType === 'square') return { width: 1080, height: 1080 };
+  return { width: 1080, height: 1350 };
+}
+
+function inferSection(text: string) {
+  const t = String(text || '').toLowerCase();
+  if (/metro|movilidad|transporte|viaducto|línea|linea|gonzalitos|tr[aá]fico|carretera/.test(t)) return 'MOVILIDAD';
+  if (/lluvia|clima|tormenta|inund|protecci[oó]n civil/.test(t)) return 'PROTECCIÓN CIVIL';
+  if (/cateo|fiscal[ií]a|seguridad|fuerza civil|delito|homicidio|robo|amenaza|detenid/.test(t)) return 'SEGURIDAD';
+  if (/sheinbaum|gobierno|samuel|congreso|federal|alcald|diputad|elecci[oó]n/.test(t)) return 'POLÍTICA';
+  if (/inversi[oó]n|industria|empresa|empleo|nearshoring|econom[ií]a/.test(t)) return 'ECONOMÍA';
+  if (/tigres|rayados|f[uú]tbol|deporte/.test(t)) return 'DEPORTES';
   return 'NUEVO LEÓN';
+}
+
+function inferLocation(text: string) {
+  const t = String(text || '').toLowerCase();
+  const locations: Array<[RegExp, string]> = [
+    [/\bsan pedro\b|garza garc[ií]a/, 'SAN PEDRO'],
+    [/\bapodaca\b/, 'APODACA'],
+    [/\bguadalupe\b/, 'GUADALUPE'],
+    [/\bmonterrey\b/, 'MONTERREY'],
+    [/\bsanta catarina\b/, 'SANTA CATARINA'],
+    [/\bescobedo\b/, 'ESCOBEDO'],
+    [/\bgarc[ií]a\b/, 'GARCÍA'],
+    [/\bsan nicol[aá]s\b/, 'SAN NICOLÁS'],
+    [/\bju[aá]rez\b/, 'JUÁREZ'],
+    [/\bsantiago\b/, 'SANTIAGO'],
+    [/\bcadereyta\b/, 'CADEREYTA'],
+  ];
+  for (const [re, label] of locations) if (re.test(t)) return label;
+  return 'NUEVO LEÓN';
+}
+
+function kickerFor(story: any, spec: any) {
+  const context = `${story.title || ''} ${story.summary || ''} ${spec.section || ''} ${spec.secondary || ''} ${spec.subheadline || ''}`;
+  const location = String(spec.location || inferLocation(context)).toUpperCase();
+  const section = String(spec.section || inferSection(context)).toUpperCase();
+  if (location === section) return location;
+  if (location === 'NUEVO LEÓN' && section === 'NUEVO LEÓN') return 'NUEVO LEÓN';
+  return `${location}  |  ${section}`;
 }
 
 function hasCommand(name: string) {
@@ -111,7 +143,7 @@ async function fetchSourceImage(storyId: string, tmpDir: string) {
       const pageRes = await fetch(pageUrl, {
         redirect: 'follow',
         signal: AbortSignal.timeout(7000),
-        headers: { 'user-agent': 'Mozilla/5.0 AI-Media-Network-Operator/0.5' }
+        headers: { 'user-agent': 'Mozilla/5.0 AI-Media-Network-Operator/0.5.2' }
       });
       if (!pageRes.ok) continue;
       const type = pageRes.headers.get('content-type') || '';
@@ -124,7 +156,7 @@ async function fetchSourceImage(storyId: string, tmpDir: string) {
       const imageRes = await fetch(imageUrl, {
         redirect: 'follow',
         signal: AbortSignal.timeout(9000),
-        headers: { 'user-agent': 'Mozilla/5.0 AI-Media-Network-Operator/0.5', accept: 'image/*' }
+        headers: { 'user-agent': 'Mozilla/5.0 AI-Media-Network-Operator/0.5.2', accept: 'image/*' }
       });
       if (!imageRes.ok) continue;
       const imageType = imageRes.headers.get('content-type') || '';
@@ -142,23 +174,31 @@ async function fetchSourceImage(storyId: string, tmpDir: string) {
   return null;
 }
 
+function assetPath(name: string) {
+  return path.join(process.cwd(), 'assets', name);
+}
+
 function fallbackImagePath() {
-  return path.join(process.cwd(), 'assets', 'nea-fallback-monterrey.jpg');
+  return assetPath('nea-fallback-monterrey.jpg');
+}
+
+function logoFullPath() {
+  return assetPath('nea-logo-full.png');
+}
+
+function isotipoPath() {
+  return assetPath('nea-isotipo.png');
 }
 
 async function runMagick(args: string[]) {
   const cmd = imageMagickCommand();
-  // All callers use the legacy first token "convert". ImageMagick 7 expects
-  // `magick <args>` while ImageMagick 6 expects `convert <args>`.
   const normalized = args[0] === 'convert' ? args.slice(1) : args;
   await execFileAsync(cmd, normalized);
 }
 
 async function prepareSourceImage(photoPath: string, tmpDir: string) {
   if (!/\.webp$/i.test(photoPath)) return photoPath;
-  if (!hasCommand('dwebp')) {
-    throw new Error('WebP decoder dwebp is not installed in the container');
-  }
+  if (!hasCommand('dwebp')) throw new Error('WebP decoder dwebp is not installed in the container');
   const decoded = path.join(tmpDir, `decoded-${randomUUID()}.png`);
   await execFileAsync('dwebp', [photoPath, '-o', decoded]);
   return decoded;
@@ -187,109 +227,138 @@ async function makePhotoBase(photoPath: string, outPath: string, width: number, 
   ]);
 }
 
-async function renderStoryLike(photoPath: string, outPath: string, story: any, spec: any, pieceType: string, sourceName: string) {
+async function makeScaledAsset(asset: string, outPath: string, width: number, height?: number) {
+  const geometry = height ? `${width}x${height}` : `${width}x`;
+  await runMagick(['convert', asset, '-resize', geometry, outPath]);
+}
+
+async function compositeAsset(base: string, asset: string, out: string, x: number, y: number) {
+  await runMagick(['convert', base, asset, '-gravity', 'northwest', '-geometry', `+${x}+${y}`, '-compose', 'over', '-composite', out]);
+}
+
+async function renderStoryLike(photoPath: string, outPath: string, story: any, spec: any, pieceType: string, sourceName: string, tmpDir: string) {
   const c = brandColors();
-  const { width, height } = parseSize(spec.size || '1080x1920');
-  const bg = `${outPath}.bg.jpg`;
+  const { width, height } = canvasFor(pieceType); // 1080 x 1920 exact
+  const bg = path.join(tmpDir, 'story-bg.jpg');
+  const stage1 = path.join(tmpDir, 'story-stage1.png');
+  const stage2 = path.join(tmpDir, 'story-stage2.png');
+  const logo = path.join(tmpDir, 'logo-story.png');
+  const iso = path.join(tmpDir, 'iso-story.png');
+
   await makePhotoBase(photoPath, bg, width, height);
 
-  const title = wrapText(spec.headline || story.title, 23, 6).join('\n');
-  const secondary = wrapText(spec.secondary || spec.subheadline || story.summary || '', 39, 4).join('\n');
-  const section = spec.section || inferSection(story.title);
-  const label = pieceType === 'breaking' ? 'ÚLTIMA HORA' : `${section}`;
-  const location = 'NUEVO LEÓN';
+  const title = wrapText(spec.headline || story.title, 24, 5).join('\n');
+  const secondary = wrapText(spec.secondary || spec.subheadline || story.summary || '', 42, 3).join('\n');
+  const kicker = kickerFor(story, spec);
   const source = sourceName ? `Fuente: ${sourceName}` : 'Fuente: AI Media Network';
 
-  const args = [
+  // Story safe area: 84 px sides, 72 px top, 170 px bottom.
+  await runMagick([
     'convert', bg,
-    // dark gradient for text readability
-    '(', '-size', `${width}x${height}`, 'gradient:rgba(6,24,24,0.00)-rgba(6,24,24,0.92)', ')', '-gravity', 'south', '-compose', 'over', '-composite',
-    '-fill', 'rgba(8,42,40,0.55)', '-draw', `rectangle 0,0 ${width},210`,
-    '-fill', c.ivory, '-font', 'DejaVu-Serif-Bold', '-pointsize', '62', '-gravity', 'northwest', '-annotate', '+70+48', 'Norte\nEn Alerta',
-    '-fill', c.copper, '-font', 'DejaVu-Sans-Bold', '-pointsize', '26', '-gravity', 'northeast', '-annotate', '+70+62', 'NUEVO LEÓN,\nCON CONTEXTO.',
-    '-fill', c.copper, '-draw', `rectangle 70,190 160,198`,
-    '-fill', c.ivory, '-font', 'DejaVu-Sans-Bold', '-pointsize', '28', '-gravity', 'southwest', '-annotate', '+70+760', `${location}  |  ${label}`,
-    '-fill', c.ivory, '-font', 'DejaVu-Serif-Bold', '-pointsize', pieceType === 'reel' ? '66' : '72', '-interline-spacing', '-7', '-gravity', 'southwest', '-annotate', '+70+430', title,
-    '-fill', c.ivory, '-font', 'DejaVu-Sans', '-pointsize', '31', '-interline-spacing', '5', '-gravity', 'southwest', '-annotate', '+72+250', secondary,
-    '-fill', c.copper, '-draw', `rectangle 72,${height - 185} 190,${height - 176}`,
-    '-fill', c.ivory, '-font', 'DejaVu-Sans', '-pointsize', '19', '-gravity', 'southwest', '-annotate', '+72+108', source,
-    '-fill', c.ivory, '-font', 'DejaVu-Sans-Bold', '-pointsize', '20', '-gravity', 'southeast', '-annotate', '+70+108', 'NORTE EN ALERTA',
-    '-quality', '94', outPath,
-  ];
-  await runMagick(args);
-  await fs.rm(bg, { force: true });
+    '(', '-size', `${width}x${height}`, 'gradient:rgba(5,20,20,0.02)-rgba(5,20,20,0.94)', ')', '-gravity', 'south', '-compose', 'over', '-composite',
+    '-fill', 'rgba(247,244,236,0.94)', '-draw', `roundrectangle 60,52 454,260 26,26`,
+    '-fill', c.copper, '-font', 'DejaVu-Sans-Bold', '-pointsize', '24', '-gravity', 'northeast', '-annotate', '+78+72', 'NUEVO LEÓN,\nSIEMPRE DA TEMA.',
+    '-fill', c.ivory, '-font', 'DejaVu-Sans-Bold', '-pointsize', '27', '-gravity', 'southwest', '-annotate', '+84+735', kicker,
+    '-fill', c.ivory, '-font', 'DejaVu-Serif-Bold', '-pointsize', pieceType === 'reel' ? '66' : '70', '-interline-spacing', '-7', '-gravity', 'southwest', '-annotate', '+84+392', title,
+    '-fill', c.ivory, '-font', 'DejaVu-Sans', '-pointsize', '30', '-interline-spacing', '5', '-gravity', 'southwest', '-annotate', '+86+230', secondary,
+    '-fill', c.copper, '-draw', `rectangle 86,${height - 188} 204,${height - 179}`,
+    '-fill', c.ivory, '-font', 'DejaVu-Sans', '-pointsize', '18', '-gravity', 'southwest', '-annotate', '+86+118', source,
+    '-quality', '94', stage1,
+  ]);
+
+  await makeScaledAsset(logoFullPath(), logo, 330);
+  await compositeAsset(stage1, logo, stage2, 84, 84);
+  await makeScaledAsset(isotipoPath(), iso, 74, 74);
+  await compositeAsset(stage2, iso, outPath, width - 84 - 74, height - 164);
 }
 
-async function renderFeed(photoPath: string, outPath: string, story: any, spec: any, pieceType: string, sourceName: string) {
+async function renderFeed(photoPath: string, outPath: string, story: any, spec: any, pieceType: string, sourceName: string, tmpDir: string) {
   const c = brandColors();
-  const { width, height } = parseSize(spec.size || '1080x1350');
-  const canvas = `${outPath}.canvas.png`;
-  const photo = `${outPath}.photo.jpg`;
-  const headerH = Math.round(height * 0.15);
-  const photoH = Math.round(height * 0.43);
+  const { width, height } = canvasFor(pieceType);
+  const margin = pieceType === 'square' ? 62 : 70;
+  const headerH = pieceType === 'square' ? 150 : 172;
+  const footerH = pieceType === 'square' ? 105 : 118;
+  const photoH = pieceType === 'square' ? 410 : 500;
   const photoY = headerH;
   const textY = photoY + photoH;
-  const footerH = Math.round(height * 0.11);
   const bodyBottom = height - footerH;
+
+  const canvas = path.join(tmpDir, 'feed-canvas.png');
+  const stage1 = path.join(tmpDir, 'feed-stage1.png');
+  const stage2 = path.join(tmpDir, 'feed-stage2.png');
+  const photo = path.join(tmpDir, 'feed-photo.jpg');
+  const logo = path.join(tmpDir, 'logo-feed.png');
+  const iso = path.join(tmpDir, 'iso-feed.png');
+
   await makePhotoBase(photoPath, photo, width, photoH);
-
   await runMagick(['convert', '-size', `${width}x${height}`, `xc:${c.ivory}`, canvas]);
-  await runMagick(['convert', canvas, photo, '-gravity', 'north', '-geometry', `+0+${photoY}`, '-compose', 'over', '-composite', canvas]);
+  await runMagick(['convert', canvas, photo, '-gravity', 'north', '-geometry', `+0+${photoY}`, '-compose', 'over', '-composite', stage1]);
 
-  const title = wrapText(spec.headline || story.title, 26, 4).join('\n');
-  const secondary = wrapText(spec.subheadline || spec.secondary || story.summary || '', 53, 3).join('\n');
-  const section = spec.section || inferSection(story.title);
-  const category = `NUEVO LEÓN  |  ${section}`;
+  const title = wrapText(spec.headline || story.title, pieceType === 'square' ? 25 : 29, pieceType === 'square' ? 3 : 4).join('\n');
+  const secondary = wrapText(spec.subheadline || spec.secondary || story.summary || '', pieceType === 'square' ? 45 : 54, pieceType === 'square' ? 2 : 3).join('\n');
+  const kicker = kickerFor(story, spec);
   const breaking = pieceType === 'breaking';
   const source = sourceName ? `FUENTE: ${sourceName}` : 'FUENTE: AI MEDIA NETWORK';
+  const titlePoint = pieceType === 'square' ? '48' : '56';
+  const bodyPoint = pieceType === 'square' ? '23' : '26';
 
   const args = [
-    'convert', canvas,
-    '-fill', c.ink, '-font', 'DejaVu-Serif-Bold', '-pointsize', '56', '-gravity', 'northwest', '-annotate', '+54+38', 'Norte\nEn Alerta',
-    '-fill', c.copper, '-draw', `rectangle 56,${headerH - 35} 142,${headerH - 27}`,
-    '-fill', c.muted, '-font', 'DejaVu-Sans-Bold', '-pointsize', '19', '-gravity', 'northeast', '-annotate', '+55+55', 'SERIO  •  CONFIABLE\nEDITORIAL  •  REGIONAL',
-    '-fill', c.ink, '-font', 'DejaVu-Sans-Bold', '-pointsize', '23', '-gravity', 'northwest', '-annotate', `+58+${textY + 34}`, category,
+    'convert', stage1,
+    '-fill', c.copper, '-font', 'DejaVu-Sans-Bold', '-pointsize', '18', '-gravity', 'northeast', '-annotate', `+${margin}+48`, 'NUEVO LEÓN, SIEMPRE DA TEMA.',
+    '-fill', c.ink, '-font', 'DejaVu-Sans-Bold', '-pointsize', '21', '-gravity', 'northwest', '-annotate', `+${margin}+${textY + 32}`, kicker,
   ];
 
+  let titleY = textY + 88;
   if (breaking) {
-    args.push('-fill', c.red, '-draw', `roundrectangle 58,${textY + 74} 330,${textY + 132} 5,5`);
-    args.push('-fill', c.ivory, '-font', 'DejaVu-Sans-Bold', '-pointsize', '26', '-gravity', 'northwest', '-annotate', `+82+${textY + 88}`, 'ÚLTIMA HORA');
+    args.push('-fill', c.red, '-draw', `roundrectangle ${margin},${textY + 70} ${margin + 260},${textY + 124} 5,5`);
+    args.push('-fill', c.ivory, '-font', 'DejaVu-Sans-Bold', '-pointsize', '23', '-gravity', 'northwest', '-annotate', `+${margin + 22}+${textY + 82}`, 'ÚLTIMA HORA');
+    titleY = textY + 152;
   }
 
-  const titleOffset = breaking ? 155 : 95;
   args.push(
-    '-fill', c.ink, '-font', 'DejaVu-Serif-Bold', '-pointsize', '58', '-interline-spacing', '-7', '-gravity', 'northwest', '-annotate', `+56+${textY + titleOffset}`, title,
-    '-fill', '#2D3A3E', '-font', 'DejaVu-Sans', '-pointsize', '26', '-interline-spacing', '4', '-gravity', 'southwest', '-annotate', `+58+${footerH + 55}`, secondary,
-    '-fill', c.copper, '-draw', `rectangle 58,${bodyBottom - 42} 150,${bodyBottom - 34}`,
-    '-fill', c.muted, '-font', 'DejaVu-Sans-Bold', '-pointsize', '15', '-gravity', 'southwest', '-annotate', `+58+${footerH + 20}`, source,
+    '-fill', c.ink, '-font', 'DejaVu-Serif-Bold', '-pointsize', titlePoint, '-interline-spacing', '-6', '-gravity', 'northwest', '-annotate', `+${margin}+${titleY}`, title,
+    '-fill', '#2D3A3E', '-font', 'DejaVu-Sans', '-pointsize', bodyPoint, '-interline-spacing', '4', '-gravity', 'southwest', '-annotate', `+${margin}+${footerH + 52}`, secondary,
+    '-fill', c.copper, '-draw', `rectangle ${margin},${bodyBottom - 36} ${margin + 90},${bodyBottom - 29}`,
+    '-fill', c.muted, '-font', 'DejaVu-Sans-Bold', '-pointsize', '14', '-gravity', 'southwest', '-annotate', `+${margin}+${footerH + 18}`, source,
     '-fill', c.green, '-draw', `rectangle 0,${bodyBottom} ${width},${height}`,
-    '-fill', c.ivory, '-font', 'DejaVu-Serif-Bold', '-pointsize', '32', '-gravity', 'southwest', '-annotate', '+55+50', 'Norte En Alerta',
-    '-fill', c.ivory, '-font', 'DejaVu-Sans-Bold', '-pointsize', '18', '-gravity', 'south', '-annotate', '+0+53', 'SERIO  •  CONFIABLE  •  EDITORIAL  •  REGIONAL',
-    '-fill', c.copper, '-font', 'DejaVu-Sans-Bold', '-pointsize', '16', '-gravity', 'southeast', '-annotate', '+55+53', 'NUEVO LEÓN, SIEMPRE DA TEMA.',
-    '-quality', '94', outPath,
+    '-fill', c.ivory, '-font', 'DejaVu-Sans-Bold', '-pointsize', '16', '-gravity', 'south', '-annotate', '+0+42', 'SERIO  •  CONFIABLE  •  EDITORIAL  •  REGIONAL',
+    '-quality', '94', stage2,
   );
-
   await runMagick(args);
-  await fs.rm(canvas, { force: true });
-  await fs.rm(photo, { force: true });
+
+  await makeScaledAsset(logoFullPath(), logo, pieceType === 'square' ? 235 : 270);
+  await compositeAsset(stage2, logo, canvas, margin, 35);
+  await makeScaledAsset(isotipoPath(), iso, pieceType === 'square' ? 52 : 56, pieceType === 'square' ? 52 : 56);
+  await compositeAsset(canvas, iso, outPath, margin, bodyBottom + Math.round((footerH - (pieceType === 'square' ? 52 : 56)) / 2));
 }
 
-async function renderQuote(outPath: string, story: any, spec: any) {
+async function renderQuote(outPath: string, story: any, spec: any, tmpDir: string) {
   const c = brandColors();
-  const { width, height } = parseSize(spec.size || '1080x1350');
-  const quote = wrapText(spec.quote || spec.headline || story.title, 25, 8).join('\n');
-  const attribution = wrapText(spec.attribution || '', 36, 2).join('\n');
+  const { width, height } = canvasFor('quote');
+  const quote = wrapText(spec.quote || spec.headline || story.title, 27, 7).join('\n');
+  const attribution = wrapText(spec.attribution || '', 38, 2).join('\n');
+  const stage = path.join(tmpDir, 'quote-stage.png');
+  const logo = path.join(tmpDir, 'logo-quote.png');
+  const iso = path.join(tmpDir, 'iso-quote.png');
+
   await runMagick([
     'convert', '-size', `${width}x${height}`, `xc:${c.ivory}`,
-    '-fill', c.green, '-draw', `rectangle 0,0 ${width},175`,
-    '-fill', c.ivory, '-font', 'DejaVu-Serif-Bold', '-pointsize', '48', '-gravity', 'northwest', '-annotate', '+55+42', 'Norte En Alerta',
-    '-fill', c.copper, '-font', 'DejaVu-Serif-Bold', '-pointsize', '150', '-gravity', 'northwest', '-annotate', '+55+220', '“',
-    '-fill', c.ink, '-font', 'DejaVu-Serif-Bold', '-pointsize', '58', '-interline-spacing', '-6', '-gravity', 'center', '-annotate', '+0-40', quote,
-    '-fill', c.copper, '-font', 'DejaVu-Sans-Bold', '-pointsize', '25', '-gravity', 'southwest', '-annotate', '+60+145', attribution,
-    '-fill', c.green, '-draw', `rectangle 0,${height - 100} ${width},${height}`,
-    '-fill', c.ivory, '-font', 'DejaVu-Sans-Bold', '-pointsize', '18', '-gravity', 'south', '-annotate', '+0+38', 'NUEVO LEÓN, CON CONTEXTO.',
-    outPath,
+    '-fill', c.green, '-draw', `rectangle 0,0 ${width},190`,
+    '-fill', c.ivory, '-draw', 'roundrectangle 46,22 390,174 24,24',
+    '-fill', c.copper, '-font', 'DejaVu-Serif-Bold', '-pointsize', '150', '-gravity', 'northwest', '-annotate', '+65+235', '“',
+    '-fill', c.ink, '-font', 'DejaVu-Serif-Bold', '-pointsize', '58', '-interline-spacing', '-6', '-gravity', 'center', '-annotate', '+0-35', quote,
+    '-fill', c.copper, '-font', 'DejaVu-Sans-Bold', '-pointsize', '25', '-gravity', 'southwest', '-annotate', '+70+150', attribution,
+    '-fill', c.green, '-draw', `rectangle 0,${height - 115} ${width},${height}`,
+    '-fill', c.ivory, '-font', 'DejaVu-Sans-Bold', '-pointsize', '17', '-gravity', 'south', '-annotate', '+0+43', 'NUEVO LEÓN, CON CONTEXTO.',
+    stage,
   ]);
+
+  await makeScaledAsset(logoFullPath(), logo, 285);
+  await compositeAsset(stage, logo, outPath, 70, 38);
+  await makeScaledAsset(isotipoPath(), iso, 58, 58);
+  const final = path.join(tmpDir, 'quote-final.png');
+  await compositeAsset(outPath, iso, final, 70, height - 86);
+  await fs.copyFile(final, outPath);
 }
 
 export async function renderPiecePng({ story, contentPiece, pieceType }:{ story:any; contentPiece:any; pieceType:string; }) {
@@ -315,18 +384,18 @@ export async function renderPiecePng({ story, contentPiece, pieceType }:{ story:
     }
 
     if (pieceType === 'story' || pieceType === 'reel') {
-      await renderStoryLike(photoPath, outPath, story, spec, pieceType, sourceName);
+      await renderStoryLike(photoPath, outPath, story, spec, pieceType, sourceName, tmpDir);
     } else if (pieceType === 'quote') {
-      await renderQuote(outPath, story, spec);
+      await renderQuote(outPath, story, spec, tmpDir);
     } else {
-      await renderFeed(photoPath, outPath, story, spec, pieceType, sourceName);
+      await renderFeed(photoPath, outPath, story, spec, pieceType, sourceName, tmpDir);
     }
 
     const buffer = await fs.readFile(outPath);
     return {
       buffer,
       filename: `${story.story_number}-${pieceType}.png`,
-      spec,
+      spec: { ...spec, size: `${canvasFor(pieceType).width}x${canvasFor(pieceType).height}` },
       imageSource,
       usedFallback,
     };

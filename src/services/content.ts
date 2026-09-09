@@ -38,6 +38,7 @@ SOURCES:
 ${JSON.stringify(details.sources)}
 
 Rules: never invent numbers, names, dates or quotes. Separate news from opinion. For electoral content preserve exact status (aspirant/precandidate/candidate) and attribute polls/allegations. Norte En Alerta style is serious, clear, regional, contextual, very low clickbait.
+Visual metadata: when a municipality is explicitly supported by the Story, put it in location (for example APODACA, SAN PEDRO, MONTERREY). Put the editorial section in section (for example SEGURIDAD, MOVILIDAD, POLÍTICA). Do not repeat NUEVO LEÓN | NUEVO LEÓN. Canvas sizes are fixed by the renderer: feed 1080x1350, story/reel 1080x1920, square 1080x1080.
 
 Return ONLY valid JSON:
 {
@@ -48,13 +49,13 @@ Return ONLY valid JSON:
   "instagram":"",
   "x":"",
   "visuals": {
-    "fb": {"template":"NEA_FEED_POST","size":"1080x1350","section":"","headline":"","subheadline":"","image_direction":"","footer":"","notes":""},
-    "story": {"template":"NEA_STORY_9X16","size":"1080x1920","headline":"","secondary":"","cta":"Conoce los detalles","notes":""},
-    "reel": {"template":"NEA_REEL_COVER","size":"1080x1920","headline":"","subheadline":"","notes":""},
-    "square": {"template":"NEA_SQUARE_POST","size":"1080x1080","headline":"","subheadline":"","notes":""},
-    "breaking": {"template":"NEA_BREAKING_POST","size":"1080x1350","headline":"","subheadline":"","notes":""},
+    "fb": {"template":"NEA_FEED_POST","size":"1080x1350","location":"","section":"","headline":"","subheadline":"","image_direction":"","footer":"","notes":""},
+    "story": {"template":"NEA_STORY_9X16","size":"1080x1920","location":"","section":"","headline":"","secondary":"","cta":"Conoce los detalles","notes":""},
+    "reel": {"template":"NEA_REEL_COVER","size":"1080x1920","location":"","section":"","headline":"","subheadline":"","notes":""},
+    "square": {"template":"NEA_SQUARE_POST","size":"1080x1080","location":"","section":"","headline":"","subheadline":"","notes":""},
+    "breaking": {"template":"NEA_BREAKING_POST","size":"1080x1350","location":"","section":"","headline":"","subheadline":"","notes":""},
     "quote": {"template":"NEA_QUOTE_POST","size":"1080x1350","headline":"","quote":"","attribution":"","notes":""},
-    "carousel": {"template":"NEA_CAROUSEL","size":"1080x1350","cover_headline":"","slides":[{"headline":"","body":""}],"notes":""}
+    "carousel": {"template":"NEA_CAROUSEL","size":"1080x1350","location":"","section":"","cover_headline":"","slides":[{"headline":"","body":""}],"notes":""}
   },
   "reel_scripts": {"hook":"","script_20s":"","script_40s":""},
   "source_attribution": ["..."]
