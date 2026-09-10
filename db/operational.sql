@@ -84,3 +84,31 @@ CREATE TABLE IF NOT EXISTS watch_items (
 CREATE INDEX IF NOT EXISTS idx_discovered_documents_published ON discovered_documents(published_at DESC);
 CREATE INDEX IF NOT EXISTS idx_story_claims_story ON story_claims(story_id);
 CREATE INDEX IF NOT EXISTS idx_content_pieces_story_identity ON content_pieces(story_id, identity_id);
+
+CREATE TABLE IF NOT EXISTS integration_tokens (
+  provider VARCHAR(80) PRIMARY KEY,
+  access_token TEXT,
+  refresh_token TEXT,
+  expires_at TIMESTAMPTZ,
+  scope TEXT,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS production_exports (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  story_id UUID NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
+  identity_id UUID NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  format VARCHAR(40) NOT NULL,
+  status VARCHAR(30) NOT NULL DEFAULT 'pending',
+  drive_folder_id TEXT,
+  drive_piece_file_id TEXT,
+  drive_copy_file_id TEXT,
+  drive_metadata_file_id TEXT,
+  queue_synced BOOLEAN NOT NULL DEFAULT false,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_production_exports_story ON production_exports(story_id, created_at DESC);

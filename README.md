@@ -130,3 +130,28 @@ No code should be written specifically for Nuevo Leon. State-specific behavior b
 - Feed: header editorial con logotipo oficial, foto, kicker, titular, bajada, fuente y footer compacto.
 - Corrige etiquetas duplicadas como `NUEVO LEÓN | NUEVO LEÓN`; ahora intenta usar municipio + sección, por ejemplo `APODACA | SEGURIDAD`.
 - Mantiene compatibilidad con Stories ya generadas: si `location` o `section` no existen en la spec, el renderer los infiere del Story.
+
+## v0.6.0 - Google Drive production queue
+
+This version adds a one-time Google OAuth connection and automatic production export.
+
+Required Google Cloud APIs:
+- Google Drive API
+- Google Sheets API
+
+Required Railway variables:
+- GOOGLE_DRIVE_ENABLED=true
+- GOOGLE_CLIENT_ID
+- GOOGLE_CLIENT_SECRET
+- GOOGLE_REDIRECT_URI
+- GOOGLE_DRIVE_ROOT_FOLDER_ID
+- GOOGLE_DRIVE_PENDING_FOLDER_ID
+- GOOGLE_DRIVE_PUBLISHED_FOLDER_ID
+- GOOGLE_DRIVE_QUEUE_SHEET_ID
+- GOOGLE_DRIVE_QUEUE_SHEET_TAB=COLA (optional; defaults to COLA)
+
+After deploy:
+1. Send `/drive` in Telegram.
+2. Open the authorization URL and authorize the same Google account that owns the AI MEDIA NETWORK folder.
+3. Return to Telegram and send `/drive` again. It should report CONNECTED.
+4. Run `/pieza <story> <format>`; the PNG, suggested copy and metadata will be saved to Drive and the queue Sheet will be updated.

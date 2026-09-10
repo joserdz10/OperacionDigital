@@ -9,6 +9,8 @@ import { chunkText, pct } from './format.js';
 import { helpText } from './help.js';
 import { normalize } from '../config/network.js';
 import { renderPiecePng } from '../services/render.js';
+import { env } from '../config/env.js';
+import { googleAuthorizationUrl, googleConnectionStatus, saveProductionPiece } from '../services/google-drive.js';
 
 function args(ctx: Context): string[] {
   const text = ctx.message && 'text' in ctx.message ? ctx.message.text || '' : '';
@@ -119,6 +121,32 @@ async function sendPieceSpec(ctx: Context, story: any, requestedType?: string | 
         `${cp.headline || story.title}${photoNote}`,
       reply_markup: pieceKeyboard(story.story_number)
     });
+
+
+    if (env.googleDriveEnabled) {
+      try {
+        const saved = await saveProductionPiece({
+          story,
+          pieceType: pieceType.key,
+          pieceLabel: pieceType.label,
+          imageBuffer: rendered.buffer,
+          imageFilename: rendered.filename,
+          headline: cp.headline || story.title,
+        });
+        await ctx.reply(
+          `☁️ Guardada en Google Drive\n` +
+          `Estado: PENDIENTE DE PUBLICACIÓN\n` +
+          `Carpeta: ${saved.folderUrl}\n` +
+          `${saved.queueUpdated ? '📋 Agregada a COLA_DE_PUBLICACION' : `⚠️ Pieza guardada, pero la cola no se actualizó: ${saved.queueError || 'error desconocido'}`}`
+        );
+      } catch (driveError: any) {
+        await ctx.reply(
+          `⚠️ La pieza se generó y se envió por Telegram, pero no se guardó en Drive.\n` +
+          `${driveError?.message || driveError}\n\n` +
+          `Usa /drive para revisar la conexión.`
+        );
+      }
+    }
   } catch (error: any) {
     await ctx.reply(
       `No pude renderizar la pieza automáticamente.\n\n` +
@@ -138,6 +166,29 @@ export function registerCommands(bot: Bot) {
 
   bot.command('whoami', async (ctx) => {
     await ctx.reply(`Telegram chat id: ${ctx.chat.id}\nUsalo en TELEGRAM_ALLOWED_CHAT_IDS para restringir el bot.`);
+  });
+
+
+  bot.command('drive', async (ctx) => {
+    if (!env.googleDriveEnabled) {
+      return ctx.reply('Google Drive está deshabilitado. Revisa GOOGLE_DRIVE_ENABLED en Railway.');
+    }
+    try {
+      const status = await googleConnectionStatus();
+      if (status.connected) {
+        return ctx.reply(
+          `✅ GOOGLE DRIVE CONECTADO\n` +
+          `Las piezas nuevas se guardarán automáticamente en PENDIENTES y se registrarán en COLA_DE_PUBLICACION.`
+        );
+      }
+      const url = googleAuthorizationUrl();
+      await ctx.reply(
+        `Google Drive todavía no está autorizado.\n\n` +
+        `Abre este enlace una sola vez e inicia sesión con la cuenta propietaria del Drive:\n${url}`
+      );
+    } catch (e: any) {
+      await ctx.reply(`No pude revisar Google Drive: ${e?.message || e}`);
+    }
   });
 
   bot.command('estado_actual', async (ctx) => {

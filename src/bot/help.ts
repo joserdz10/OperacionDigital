@@ -3,6 +3,8 @@ export const commandMenu = [
   { command: 'inbox', description: 'Ver Story Inbox' },
   { command: 'story', description: 'Abrir una Story por numero' },
   { command: 'generar', description: 'Generar contenido de una Story' },
+  { command: 'pieza', description: 'Generar pieza y guardar en Drive' },
+  { command: 'drive', description: 'Conectar o revisar Google Drive' },
   { command: 'elecciones', description: 'Abrir Election Desk' },
   { command: 'urgente', description: 'Ver Stories prioritarias' },
   { command: 'resumen', description: 'Brief del State Brain activo' },
@@ -15,11 +17,10 @@ export const commandMenu = [
   { command: 'identidad', description: 'Cambiar identidad editorial' },
   { command: 'estado_actual', description: 'Ver contexto operativo' },
   { command: 'whoami', description: 'Mostrar tu Telegram chat id' },
-  { command: 'pieza', description: 'Elegir tipo de pieza grafica' },
   { command: 'ayuda', description: 'Ver todos los comandos' }
 ];
 
-export const helpText = `AI MEDIA NETWORK OPERATOR v0.5.2
+export const helpText = `AI MEDIA NETWORK OPERATOR v0.6.0
 
 Comandos principales:
 /corrida 6h - Discovery real del periodo
@@ -43,6 +44,7 @@ Inteligencia:
 /fuentes
 
 Produccion:
+/drive - conectar/revisar Google Drive
 /ready
 /pieza 12 - abre selector de formato
 /pieza 12 fb - post Facebook/IG 1080x1350
@@ -53,4 +55,4 @@ Produccion:
 /pieza 12 quote - cita 1080x1350
 /pieza 12 carousel - carrusel 1080x1350 por slide
 
-Tambien puedes escribir instrucciones en lenguaje natural.`;
+Cuando Drive está conectado, /pieza guarda automáticamente imagen + copy + metadata en PENDIENTES y registra la fila en COLA_DE_PUBLICACION.`;
