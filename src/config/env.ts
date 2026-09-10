@@ -47,6 +47,7 @@ export function validateGoogleConfig() {
     ['GOOGLE_REDIRECT_URI', env.googleRedirectUri],
     ['GOOGLE_DRIVE_ROOT_FOLDER_ID', env.googleDriveRootFolderId],
     ['GOOGLE_DRIVE_PENDING_FOLDER_ID', env.googleDrivePendingFolderId],
+    ['GOOGLE_DRIVE_PUBLISHED_FOLDER_ID', env.googleDrivePublishedFolderId],
     ['GOOGLE_DRIVE_QUEUE_SHEET_ID', env.googleDriveQueueSheetId],
   ];
   const missing = requiredValues.filter(([, value]) => !value).map(([name]) => name);

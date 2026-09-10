@@ -10,7 +10,7 @@ import { helpText } from './help.js';
 import { normalize } from '../config/network.js';
 import { renderPiecePng } from '../services/render.js';
 import { env } from '../config/env.js';
-import { googleAuthorizationUrl, googleConnectionStatus, saveProductionPiece } from '../services/google-drive.js';
+import { googleAuthorizationUrl, googleConnectionStatus, markProductionPublished, saveProductionPiece } from '../services/google-drive.js';
 
 function args(ctx: Context): string[] {
   const text = ctx.message && 'text' in ctx.message ? ctx.message.text || '' : '';
@@ -21,7 +21,7 @@ async function replyChunks(ctx: Context, text: string) {
   for (const chunk of chunkText(text)) await ctx.reply(chunk);
 }
 
-async function safeAnswerCallbackQuery(ctx: Context, options?: Parameters<Context["answerCallbackQuery"]>[0]) {
+async function safeAnswerCallbackQuery(ctx: Context, options?: Parameters<Context['answerCallbackQuery']>[0]) {
   try {
     await ctx.answerCallbackQuery(options as any);
   } catch (e: any) {
@@ -42,6 +42,12 @@ type PieceOption = {
   contentType: 'graphic' | 'story' | 'reel';
 };
 
+type PieceSelection = {
+  pieceType: PieceOption;
+  candidates: string[];
+  cp: any;
+};
+
 const PIECE_OPTIONS: PieceOption[] = [
   { key: 'fb', label: 'Post Facebook / Feed', size: '1080x1350', aliases: ['fb', 'post', 'feed', 'ig', 'instagram', '4:5'], contentType: 'graphic' },
   { key: 'story', label: 'Story', size: '1080x1920', aliases: ['story', 'stories', '9:16'], contentType: 'story' },
@@ -58,6 +64,15 @@ function resolvePieceType(raw?: string | null): PieceOption | null {
   return PIECE_OPTIONS.find((option) => option.aliases.some((alias) => normalize(alias) === key)) || null;
 }
 
+function contentPieceCandidates(pieceType: PieceOption) {
+  const candidates = [pieceType.key];
+  if (pieceType.key === 'fb') candidates.push('post', 'ig');
+  if (pieceType.key === 'story') candidates.push('9:16');
+  if (pieceType.key === 'square') candidates.push('1:1');
+  if (pieceType.key === 'reel') candidates.push('vertical');
+  return candidates;
+}
+
 function pieceKeyboard(storyNumber: number | string) {
   return new InlineKeyboard()
     .text('FB/IG POST', `piece:${storyNumber}:fb`)
@@ -72,9 +87,67 @@ function pieceKeyboard(storyNumber: number | string) {
     .text('CAROUSEL', `piece:${storyNumber}:carousel`);
 }
 
-async function sendPieceSpec(ctx: Context, story: any, requestedType?: string | null) {
+function reviewKeyboard(storyNumber: number | string, pieceTypeKey: string) {
+  return new InlineKeyboard()
+    .text('✅ Aprobar y enviar a Drive', `approve:${storyNumber}:${pieceTypeKey}`)
+    .row()
+    .text('🔁 Regenerar pieza', `regenpiece:${storyNumber}:${pieceTypeKey}`)
+    .text('✍️ Regenerar copy', `regencopy:${storyNumber}:${pieceTypeKey}`)
+    .row()
+    .text('❌ Descartar', `discard:${storyNumber}:${pieceTypeKey}`)
+    .text('🧾 Volver a formatos', `piece:${storyNumber}:menu`);
+}
+
+function publicationKeyboard(storyNumber: number | string, pieceTypeKey: string) {
+  return new InlineKeyboard()
+    .text('✅ Marcar como PUBLICADA', `published:${storyNumber}:${pieceTypeKey}`);
+}
+
+async function resolvePieceSelection(story: any, requestedType?: string | null): Promise<PieceSelection | null> {
   const pieceType = resolvePieceType(requestedType);
-  if (!pieceType) {
+  if (!pieceType) return null;
+
+  const candidates = contentPieceCandidates(pieceType);
+  const cp = await one<any>(
+    `SELECT body,headline,format,content_type
+     FROM content_pieces
+     WHERE story_id=$1 AND identity_id=$2 AND content_type=$3 AND format = ANY($4::text[])
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [story.id, story.identity_id, pieceType.contentType, candidates]
+  );
+
+  if (!cp) return { pieceType, candidates, cp: null } as any;
+  return { pieceType, candidates, cp };
+}
+
+async function proposedCopyText(story: any, pieceTypeKey: string, fallbackHeadline: string) {
+  const [fbRow, igRow] = await Promise.all([
+    one<any>(`SELECT body FROM content_pieces WHERE story_id=$1 AND identity_id=$2 AND content_type='facebook' ORDER BY created_at DESC LIMIT 1`, [story.id, story.identity_id]),
+    one<any>(`SELECT body FROM content_pieces WHERE story_id=$1 AND identity_id=$2 AND content_type='instagram' ORDER BY created_at DESC LIMIT 1`, [story.id, story.identity_id]),
+  ]);
+  const fallback = `${fallbackHeadline}\n\n${story.summary || ''}`.trim();
+  if (pieceTypeKey === 'fb' || pieceTypeKey === 'breaking') return fbRow?.body || igRow?.body || fallback;
+  return igRow?.body || fbRow?.body || fallback;
+}
+
+async function markPieceWorkflowStatus(story: any, pieceType: PieceOption, status: string) {
+  const candidates = contentPieceCandidates(pieceType);
+  await query(
+    `UPDATE content_pieces
+     SET status=$1, updated_at=now()
+     WHERE story_id=$2 AND identity_id=$3
+       AND (
+         (content_type=$4 AND format = ANY($5::text[]))
+         OR content_type IN ('facebook','instagram','x')
+       )`,
+    [status, story.id, story.identity_id, pieceType.contentType, candidates]
+  );
+}
+
+async function sendPieceSpec(ctx: Context, story: any, requestedType?: string | null) {
+  const selection = await resolvePieceSelection(story, requestedType);
+  if (!selection) {
     await ctx.reply(
       `¿Qué tipo de pieza deseas generar para Story #${story.story_number}?\n\n` +
       `Usa /pieza ${story.story_number} <tipo> o selecciona una opción abajo.\n\n` +
@@ -85,20 +158,7 @@ async function sendPieceSpec(ctx: Context, story: any, requestedType?: string | 
     return;
   }
 
-  const candidates = [pieceType.key];
-  if (pieceType.key === 'fb') candidates.push('post', 'ig');
-  if (pieceType.key === 'story') candidates.push('9:16');
-  if (pieceType.key === 'square') candidates.push('1:1');
-  if (pieceType.key === 'reel') candidates.push('vertical');
-
-  const cp = await one<any>(
-    `SELECT body,headline,format,content_type
-     FROM content_pieces
-     WHERE story_id=$1 AND identity_id=$2 AND content_type=$3 AND format = ANY($4::text[])
-     ORDER BY created_at DESC
-     LIMIT 1`,
-    [story.id, story.identity_id, pieceType.contentType, candidates]
-  );
+  const { pieceType, cp } = selection;
 
   if (!cp) {
     await ctx.reply(
@@ -114,39 +174,26 @@ async function sendPieceSpec(ctx: Context, story: any, requestedType?: string | 
     const photoNote = rendered.imageSource
       ? `\nFoto obtenida de: ${rendered.imageSource.name}`
       : `\nFoto: fondo editorial de respaldo (no se encontró imagen utilizable en la fuente).`;
+
+    await markPieceWorkflowStatus(story, pieceType, 'in_review');
+
     await ctx.replyWithPhoto(new InputFile(rendered.buffer, rendered.filename), {
       caption:
         `PIEZA #${story.story_number} · ${pieceType.label}\n` +
         `${pieceType.size}\n` +
         `${cp.headline || story.title}${photoNote}`,
-      reply_markup: pieceKeyboard(story.story_number)
     });
 
-
-    if (env.googleDriveEnabled) {
-      try {
-        const saved = await saveProductionPiece({
-          story,
-          pieceType: pieceType.key,
-          pieceLabel: pieceType.label,
-          imageBuffer: rendered.buffer,
-          imageFilename: rendered.filename,
-          headline: cp.headline || story.title,
-        });
-        await ctx.reply(
-          `☁️ Guardada en Google Drive\n` +
-          `Estado: PENDIENTE DE PUBLICACIÓN\n` +
-          `Carpeta: ${saved.folderUrl}\n` +
-          `${saved.queueUpdated ? '📋 Agregada a COLA_DE_PUBLICACION' : `⚠️ Pieza guardada, pero la cola no se actualizó: ${saved.queueError || 'error desconocido'}`}`
-        );
-      } catch (driveError: any) {
-        await ctx.reply(
-          `⚠️ La pieza se generó y se envió por Telegram, pero no se guardó en Drive.\n` +
-          `${driveError?.message || driveError}\n\n` +
-          `Usa /drive para revisar la conexión.`
-        );
-      }
-    }
+    const copy = await proposedCopyText(story, pieceType.key, cp.headline || story.title);
+    await ctx.reply(
+      `PREVIEW EN REVISIÓN\n` +
+      `Story #${story.story_number} · ${pieceType.label}\n` +
+      `Estado: EN_REVISION\n\n` +
+      `COPY PROPUESTO\n${copy}\n\n` +
+      `La pieza todavía NO se ha enviado a Google Drive.\n` +
+      `Si la apruebas, entonces se guardará en PENDIENTES y se registrará en COLA_DE_PUBLICACION.`,
+      { reply_markup: reviewKeyboard(story.story_number, pieceType.key) }
+    );
   } catch (error: any) {
     await ctx.reply(
       `No pude renderizar la pieza automáticamente.\n\n` +
@@ -168,7 +215,6 @@ export function registerCommands(bot: Bot) {
     await ctx.reply(`Telegram chat id: ${ctx.chat.id}\nUsalo en TELEGRAM_ALLOWED_CHAT_IDS para restringir el bot.`);
   });
 
-
   bot.command('drive', async (ctx) => {
     if (!env.googleDriveEnabled) {
       return ctx.reply('Google Drive está deshabilitado. Revisa GOOGLE_DRIVE_ENABLED en Railway.');
@@ -178,7 +224,7 @@ export function registerCommands(bot: Bot) {
       if (status.connected) {
         return ctx.reply(
           `✅ GOOGLE DRIVE CONECTADO\n` +
-          `Las piezas nuevas se guardarán automáticamente en PENDIENTES y se registrarán en COLA_DE_PUBLICACION.`
+          `Solo las piezas APROBADAS se guardarán en PENDIENTES y se registrarán en COLA_DE_PUBLICACION.`
         );
       }
       const url = googleAuthorizationUrl();
@@ -362,7 +408,7 @@ export function registerCommands(bot: Bot) {
 
   bot.command('ready', async (ctx) => {
     const session = await getSession(ctx.chat.id);
-    const rows = await query<any>(`SELECT cp.id,cp.content_type,cp.format,cp.headline,cp.created_at,s.story_number,s.title FROM content_pieces cp JOIN stories s ON s.id=cp.story_id JOIN identities i ON i.id=cp.identity_id WHERE i.code=$1 AND cp.status='content_ready' ORDER BY cp.created_at DESC LIMIT 20`, [session.identity_code]);
+    const rows = await query<any>(`SELECT cp.id,cp.content_type,cp.format,cp.headline,cp.created_at,s.story_number,s.title FROM content_pieces cp JOIN stories s ON s.id=cp.story_id JOIN identities i ON i.id=cp.identity_id WHERE i.code=$1 AND cp.status IN ('content_ready','in_review','approved') ORDER BY cp.created_at DESC LIMIT 20`, [session.identity_code]);
     await replyChunks(ctx, `CONTENT READY\n\n${rows.map((r: any) => `#${r.story_number} · ${r.content_type}/${r.format || '-'}\n${r.headline || r.title}`).join('\n\n') || 'Sin contenido listo.'}`);
   });
 
@@ -373,6 +419,30 @@ export function registerCommands(bot: Bot) {
     if (!story) return ctx.reply('Story no encontrada.');
     await setLastStory(ctx.chat.id, story.id);
     await sendPieceSpec(ctx, story, a[1]);
+  });
+
+  bot.command('publicada', async (ctx) => {
+    const session = await getSession(ctx.chat.id);
+    const a = args(ctx);
+    const story = await findStory(session.identity_code, a[0], session.last_story_id);
+    if (!story) return ctx.reply('Story no encontrada. Uso: /publicada <story> <formato>');
+    const pieceType = resolvePieceType(a[1]);
+    if (!pieceType) return ctx.reply('Formato no reconocido. Ejemplo: /publicada 22 story');
+    try {
+      const published = await markProductionPublished({ story, pieceType: pieceType.key });
+      await markPieceWorkflowStatus(story, pieceType, 'published');
+      await ctx.reply(
+        `✅ PUBLICACIÓN COMPLETADA\n\n` +
+        `Story #${story.story_number}\n` +
+        `${pieceType.label}\n` +
+        `Estado: PUBLICADA\n\n` +
+        `📁 Movida a PUBLICADAS\n` +
+        `Carpeta: ${published.folderUrl}\n` +
+        `${published.queueUpdated ? '📋 COLA_DE_PUBLICACION actualizada' : `⚠️ Publicada en Drive, pero la cola no se actualizó: ${published.queueError || 'error desconocido'}`}`
+      );
+    } catch (e: any) {
+      await ctx.reply(`No pude marcar la pieza como publicada: ${e?.message || e}`);
+    }
   });
 
   bot.callbackQuery('inbox', async (ctx) => {
@@ -405,5 +475,114 @@ export function registerCommands(bot: Bot) {
     if (!story) return ctx.reply('Story no encontrada.');
     await setLastStory(ctx.chat!.id, story.id);
     await sendPieceSpec(ctx, story, format === 'menu' ? undefined : format);
+  });
+
+  bot.callbackQuery(/^approve:(\d+):([a-z0-9_-]+)$/i, async (ctx) => {
+    const [, ref, format] = ctx.match as RegExpMatchArray;
+    await safeAnswerCallbackQuery(ctx, { text: 'Aprobando...' });
+    const session = await getSession(ctx.chat!.id);
+    const story = await findStory(session.identity_code, ref, session.last_story_id);
+    if (!story) return ctx.reply('Story no encontrada.');
+    const selection = await resolvePieceSelection(story, format);
+    if (!selection?.cp) return ctx.reply('No encontré la pieza para aprobar. Genera el contenido de nuevo con /generar y /pieza.');
+    if (!env.googleDriveEnabled) return ctx.reply('Google Drive está deshabilitado. Actívalo en Railway antes de aprobar envíos.');
+
+    try {
+      const rendered = await renderPiecePng({ story, contentPiece: selection.cp, pieceType: selection.pieceType.key });
+      const saved = await saveProductionPiece({
+        story,
+        pieceType: selection.pieceType.key,
+        pieceLabel: selection.pieceType.label,
+        imageBuffer: rendered.buffer,
+        imageFilename: rendered.filename,
+        headline: selection.cp.headline || story.title,
+      });
+      await markPieceWorkflowStatus(story, selection.pieceType, 'approved');
+      await ctx.reply(
+        `✅ PIEZA APROBADA\n\n` +
+        `Story #${story.story_number}\n` +
+        `${selection.pieceType.label}\n` +
+        `Estado: PENDIENTE DE PUBLICACIÓN\n\n` +
+        `☁️ Guardada en Google Drive\n` +
+        `📁 Carpeta: ${saved.folderUrl}\n` +
+        `${saved.queueUpdated ? '📋 Agregada a COLA_DE_PUBLICACION' : `⚠️ Guardada en Drive, pero la cola no se actualizó: ${saved.queueError || 'error desconocido'}`}\n\n` +
+        `Cuando el equipo la publique en redes, marca el estado aquí.`,
+        { reply_markup: publicationKeyboard(story.story_number, selection.pieceType.key) }
+      );
+    } catch (e: any) {
+      await ctx.reply(
+        `⚠️ No pude enviar la pieza aprobada a Google Drive.\n` +
+        `${e?.message || e}\n\n` +
+        `La preview sigue disponible en Telegram. Usa /drive para revisar la conexión.`
+      );
+    }
+  });
+
+  bot.callbackQuery(/^published:(\d+):([a-z0-9_-]+)$/i, async (ctx) => {
+    const [, ref, format] = ctx.match as RegExpMatchArray;
+    await safeAnswerCallbackQuery(ctx, { text: 'Marcando como publicada...' });
+    const session = await getSession(ctx.chat!.id);
+    const story = await findStory(session.identity_code, ref, session.last_story_id);
+    if (!story) return ctx.reply('Story no encontrada.');
+    const pieceType = resolvePieceType(format);
+    if (!pieceType) return ctx.reply('Formato no reconocido.');
+    try {
+      const published = await markProductionPublished({ story, pieceType: pieceType.key });
+      await markPieceWorkflowStatus(story, pieceType, 'published');
+      await ctx.reply(
+        `✅ PUBLICACIÓN COMPLETADA\n\n` +
+        `Story #${story.story_number}\n` +
+        `${pieceType.label}\n` +
+        `Estado: PUBLICADA\n\n` +
+        `📁 Movida de PENDIENTES a PUBLICADAS\n` +
+        `Carpeta: ${published.folderUrl}\n` +
+        `${published.queueUpdated ? '📋 COLA_DE_PUBLICACION actualizada' : `⚠️ La carpeta se movió, pero la cola no se actualizó: ${published.queueError || 'error desconocido'}`}`
+      );
+    } catch (e: any) {
+      await ctx.reply(`No pude marcar la pieza como publicada: ${e?.message || e}`);
+    }
+  });
+
+  bot.callbackQuery(/^regenpiece:(\d+):([a-z0-9_-]+)$/i, async (ctx) => {
+    const [, ref, format] = ctx.match as RegExpMatchArray;
+    await safeAnswerCallbackQuery(ctx, { text: 'Regenerando pieza...' });
+    const session = await getSession(ctx.chat!.id);
+    const story = await findStory(session.identity_code, ref, session.last_story_id);
+    if (!story) return ctx.reply('Story no encontrada.');
+    await sendPieceSpec(ctx, story, format);
+  });
+
+  bot.callbackQuery(/^regencopy:(\d+):([a-z0-9_-]+)$/i, async (ctx) => {
+    const [, ref, format] = ctx.match as RegExpMatchArray;
+    await safeAnswerCallbackQuery(ctx, { text: 'Regenerando copy...' });
+    const session = await getSession(ctx.chat!.id);
+    const story = await findStory(session.identity_code, ref, session.last_story_id);
+    if (!story) return ctx.reply('Story no encontrada.');
+    if (Number(story.confidence_score) < 0.6) return ctx.reply(`Generacion bloqueada. Confidence ${pct(story.confidence_score)}. Revisa Claims antes de producir.`);
+    try {
+      await ctx.reply(`Regenerando copy para Story #${story.story_number}...`);
+      await generateBundle(story, 'todo');
+      await sendPieceSpec(ctx, story, format);
+    } catch (e: any) {
+      await ctx.reply(`No pude regenerar el copy: ${e.message}`);
+    }
+  });
+
+  bot.callbackQuery(/^discard:(\d+):([a-z0-9_-]+)$/i, async (ctx) => {
+    const [, ref, format] = ctx.match as RegExpMatchArray;
+    await safeAnswerCallbackQuery(ctx, { text: 'Descartando...' });
+    const session = await getSession(ctx.chat!.id);
+    const story = await findStory(session.identity_code, ref, session.last_story_id);
+    if (!story) return ctx.reply('Story no encontrada.');
+    const pieceType = resolvePieceType(format);
+    if (!pieceType) return ctx.reply('No reconocí el formato a descartar.');
+    await markPieceWorkflowStatus(story, pieceType, 'discarded');
+    await ctx.reply(
+      `❌ PIEZA DESCARTADA\n\n` +
+      `Story #${story.story_number}\n` +
+      `${pieceType.label}\n` +
+      `Estado: DESCARTADA\n\n` +
+      `No se envió a Google Drive ni se agregó a la cola.`
+    );
   });
 }

@@ -29,6 +29,14 @@ export type ProductionSaveResult = {
   queueError?: string;
 };
 
+export type ProductionPublishResult = {
+  folderId: string;
+  folderUrl: string;
+  queueUpdated: boolean;
+  queueError?: string;
+  publishedAt: Date;
+};
+
 const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/drive',
   'https://www.googleapis.com/auth/spreadsheets',
@@ -257,6 +265,54 @@ async function appendQueueRow(values: any[]) {
   });
 }
 
+async function updateQueueStatus(storyNumber: number | string, pieceType: string, status: string, publishedAt?: Date) {
+  const range = encodeURIComponent(`${env.googleDriveQueueSheetTab}!A:J`);
+  const data = await googleJson(sheetsApi(`/spreadsheets/${encodeURIComponent(env.googleDriveQueueSheetId)}/values/${range}`));
+  const rows: any[][] = Array.isArray(data.values) ? data.values : [];
+  let rowNumber = -1;
+  for (let i = rows.length - 1; i >= 1; i--) {
+    const row = rows[i] || [];
+    if (String(row[0] || '') === String(storyNumber) && String(row[3] || '').toLowerCase() === pieceType.toLowerCase()) {
+      rowNumber = i + 1;
+      break;
+    }
+  }
+  if (rowNumber < 0) throw new Error('No se encontró la fila de la pieza en COLA_DE_PUBLICACION.');
+
+  const updates: Array<{ range: string; values: any[][] }> = [
+    { range: `${env.googleDriveQueueSheetTab}!E${rowNumber}`, values: [[status]] },
+  ];
+  if (publishedAt) {
+    updates.push({
+      range: `${env.googleDriveQueueSheetTab}!J${rowNumber}`,
+      values: [[publishedAt.toLocaleString('es-MX', { timeZone: 'America/Monterrey' })]],
+    });
+  }
+
+  const body = {
+    valueInputOption: 'USER_ENTERED',
+    data: updates,
+  };
+  await googleJson(sheetsApi(`/spreadsheets/${encodeURIComponent(env.googleDriveQueueSheetId)}/values:batchUpdate`), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+async function moveDriveFolder(folderId: string, fromParentId: string, toParentId: string): Promise<DriveFile> {
+  const params = new URLSearchParams({
+    addParents: toParentId,
+    removeParents: fromParentId,
+    fields: 'id,name,mimeType,webViewLink,parents',
+  });
+  return googleJson(driveApi(`/files/${encodeURIComponent(folderId)}?${params.toString()}`), {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+}
+
 function socialCopyFor(pieceType: string, facebook?: string | null, instagram?: string | null, fallback?: string) {
   if (pieceType === 'fb' || pieceType === 'breaking') return facebook || instagram || fallback || '';
   return instagram || facebook || fallback || '';
@@ -286,8 +342,8 @@ export async function saveProductionPiece(params: {
   ]);
 
   const copy = socialCopyFor(pieceType, fbRow?.body, igRow?.body, `${headline}\n\n${story.summary || ''}`);
-  const storyFolder = await findOrCreateFolder(env.googleDrivePendingFolderId, `STORY_${story.story_number}`);
   const safeType = pieceType.replace(/[^a-z0-9_-]/gi, '_').toLowerCase();
+  const storyFolder = await findOrCreateFolder(env.googleDrivePendingFolderId, `STORY_${story.story_number}_${safeType}`);
   const pieceName = `story_${story.story_number}_${safeType}.png`;
   const copyName = `copy_${safeType}.txt`;
   const metadataName = `info_${safeType}.json`;
@@ -299,7 +355,7 @@ export async function saveProductionPiece(params: {
     identity: story.identity_name,
     format: pieceType,
     format_label: pieceLabel,
-    status: 'PENDIENTE',
+    status: 'PENDIENTE_PUBLICACION',
     headline,
     source: sourceLabel(details),
     generated_at: generatedAt.toISOString(),
@@ -320,7 +376,7 @@ export async function saveProductionPiece(params: {
       story.identity_name || 'Norte En Alerta',
       headline,
       pieceType,
-      'PENDIENTE',
+      'PENDIENTE_PUBLICACION',
       pieceFile.webViewLink || `https://drive.google.com/open?id=${pieceFile.id}`,
       copyFile.webViewLink || `https://drive.google.com/open?id=${copyFile.id}`,
       sourceLabel(details),
@@ -334,9 +390,52 @@ export async function saveProductionPiece(params: {
 
   await query(
     `INSERT INTO production_exports(story_id,identity_id,format,status,drive_folder_id,drive_piece_file_id,drive_copy_file_id,drive_metadata_file_id,queue_synced,metadata)
-     VALUES($1,$2,$3,'pending',$4,$5,$6,$7,$8,$9::jsonb)`,
+     VALUES($1,$2,$3,'pending_publication',$4,$5,$6,$7,$8,$9::jsonb)`,
     [story.id, story.identity_id, pieceType, storyFolder.id, pieceFile.id, copyFile.id, metadataFile.id, queueUpdated, JSON.stringify({ queue_error: queueError || null })]
   );
 
   return { folderId: storyFolder.id, folderUrl, pieceFile, copyFile, metadataFile, queueUpdated, queueError };
+}
+
+
+export async function markProductionPublished(params: { story: any; pieceType: string }): Promise<ProductionPublishResult> {
+  if (!env.googleDriveEnabled) throw new Error('Google Drive integration is disabled.');
+  if (!env.googleDrivePublishedFolderId) throw new Error('GOOGLE_DRIVE_PUBLISHED_FOLDER_ID is not configured.');
+
+  const { story, pieceType } = params;
+  const exportRow = await one<any>(
+    `SELECT * FROM production_exports
+     WHERE story_id=$1 AND identity_id=$2 AND format=$3 AND status IN ('pending','pending_publication')
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [story.id, story.identity_id, pieceType]
+  );
+  if (!exportRow?.drive_folder_id) {
+    throw new Error('No encontré una exportación aprobada pendiente para esta pieza.');
+  }
+
+  const moved = await moveDriveFolder(
+    exportRow.drive_folder_id,
+    env.googleDrivePendingFolderId,
+    env.googleDrivePublishedFolderId
+  );
+  const publishedAt = new Date();
+  let queueUpdated = false;
+  let queueError: string | undefined;
+  try {
+    await updateQueueStatus(story.story_number, pieceType, 'PUBLICADA', publishedAt);
+    queueUpdated = true;
+  } catch (e: any) {
+    queueError = e?.message || String(e);
+  }
+
+  await query(
+    `UPDATE production_exports
+     SET status='published', metadata = COALESCE(metadata,'{}'::jsonb) || $1::jsonb
+     WHERE id=$2`,
+    [JSON.stringify({ published_at: publishedAt.toISOString(), queue_error: queueError || null }), exportRow.id]
+  );
+
+  const folderUrl = moved.webViewLink || `https://drive.google.com/drive/folders/${moved.id}`;
+  return { folderId: moved.id, folderUrl, queueUpdated, queueError, publishedAt };
 }

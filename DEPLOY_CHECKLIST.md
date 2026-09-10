@@ -24,12 +24,12 @@
    - /generar <numero> todo
 11. Keep auto-publish OFF.
 
-## Google Drive v0.6.0
+## Google Drive v0.6.2
 - Enable Google Drive API.
 - Enable Google Sheets API.
 - OAuth client type: Web application.
 - Authorized redirect URI must exactly match GOOGLE_REDIRECT_URI.
 - If OAuth app is in Testing, add the Google account as a Test User.
-- Deploy v0.6.0.
+- Deploy v0.6.2.
 - Telegram: /drive -> authorize -> /drive.
-- Test: /pieza <story> story.
+- Test: /pieza <story> story -> approve -> publish manually -> mark PUBLICADA.

@@ -42,7 +42,7 @@ async function main() {
   app.get('/health', async (_req, res) => {
     let drive = { enabled: env.googleDriveEnabled, connected: false } as any;
     try { drive = await googleConnectionStatus(); } catch {}
-    res.json({ ok: true, service: 'ai-media-network-operator', version: '0.6.0', google_drive: drive });
+    res.json({ ok: true, service: 'ai-media-network-operator', version: '0.6.2', google_drive: drive });
   });
 
   app.get('/google/oauth/start', (_req, res) => {

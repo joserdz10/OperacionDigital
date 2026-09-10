@@ -3,7 +3,8 @@ export const commandMenu = [
   { command: 'inbox', description: 'Ver Story Inbox' },
   { command: 'story', description: 'Abrir una Story por numero' },
   { command: 'generar', description: 'Generar contenido de una Story' },
-  { command: 'pieza', description: 'Generar pieza y guardar en Drive' },
+  { command: 'pieza', description: 'Generar preview de pieza para revision' },
+  { command: 'publicada', description: 'Marcar pieza como publicada' },
   { command: 'drive', description: 'Conectar o revisar Google Drive' },
   { command: 'elecciones', description: 'Abrir Election Desk' },
   { command: 'urgente', description: 'Ver Stories prioritarias' },
@@ -20,7 +21,7 @@ export const commandMenu = [
   { command: 'ayuda', description: 'Ver todos los comandos' }
 ];
 
-export const helpText = `AI MEDIA NETWORK OPERATOR v0.6.0
+export const helpText = `AI MEDIA NETWORK OPERATOR v0.6.2
 
 Comandos principales:
 /corrida 6h - Discovery real del periodo
@@ -54,5 +55,11 @@ Produccion:
 /pieza 12 breaking - urgente 1080x1350
 /pieza 12 quote - cita 1080x1350
 /pieza 12 carousel - carrusel 1080x1350 por slide
+/publicada 12 story - marcar como publicada y mover a PUBLICADAS
 
-Cuando Drive está conectado, /pieza guarda automáticamente imagen + copy + metadata en PENDIENTES y registra la fila en COLA_DE_PUBLICACION.`;
+NUEVO FLUJO:
+1) /pieza genera una PREVIEW en Telegram
+2) Revisas pieza + copy
+3) Apruebas, regeneras o descartas
+4) Solo las piezas APROBADAS se guardan en Drive y se agregan a COLA_DE_PUBLICACION.
+5) Al marcar PUBLICADA, se mueve a PUBLICADAS y se actualiza la cola.`;

@@ -131,7 +131,7 @@ No code should be written specifically for Nuevo Leon. State-specific behavior b
 - Corrige etiquetas duplicadas como `NUEVO LEÓN | NUEVO LEÓN`; ahora intenta usar municipio + sección, por ejemplo `APODACA | SEGURIDAD`.
 - Mantiene compatibilidad con Stories ya generadas: si `location` o `section` no existen en la spec, el renderer los infiere del Story.
 
-## v0.6.0 - Google Drive production queue
+## v0.6.2 - Google Drive approval and publication queue
 
 This version adds a one-time Google OAuth connection and automatic production export.
 
@@ -154,4 +154,6 @@ After deploy:
 1. Send `/drive` in Telegram.
 2. Open the authorization URL and authorize the same Google account that owns the AI MEDIA NETWORK folder.
 3. Return to Telegram and send `/drive` again. It should report CONNECTED.
-4. Run `/pieza <story> <format>`; the PNG, suggested copy and metadata will be saved to Drive and the queue Sheet will be updated.
+4. Run `/pieza <story> <format>`; Telegram shows the preview and proposed copy. Nothing is sent to Drive yet.
+5. Press `✅ Aprobar y enviar a Drive`; only then the PNG, copy and metadata are stored in `PENDIENTES` and the queue Sheet is updated.
+6. After a human publishes the content, press `✅ Marcar como PUBLICADA` or run `/publicada <story> <format>`. The piece folder is moved to `PUBLICADAS`, the queue state becomes `PUBLICADA`, and the publication timestamp is recorded.
