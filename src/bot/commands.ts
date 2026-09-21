@@ -366,11 +366,31 @@ export function registerCommands(bot: Bot) {
   bot.command('corrida', async (ctx) => {
     const session = await getSession(ctx.chat.id);
     const period = args(ctx)[0] || '6h';
-    await ctx.reply(`Discovery iniciado: ${period}\nState Brain: ${session.territory_code}\nIdentity: ${session.identity_code}\nBuscando, verificando y deduplicando...`);
+    await ctx.reply(
+      `Discovery amplio iniciado: ${period}\n` +
+      `State Brain: ${session.territory_code}\n` +
+      `Identity: ${session.identity_code}\n` +
+      `Buscando en múltiples frentes, verificando y deduplicando...`
+    );
     try {
       const saved = await runDiscovery(session.territory_code, session.identity_code, period);
-      const lines = saved.slice(0, 12).map((s: any) => `${s.is_electoral ? '🗳 ' : ''}#${s.story_number} · ${s.priority} · R ${pct(s.relevance_score)} · C ${pct(s.confidence_score)}\n${s.title}`);
-      await replyChunks(ctx, `CORRIDA COMPLETADA\nStories creadas: ${saved.length}\n\n${lines.join('\n\n') || 'No se encontraron Stories con suficiente relevancia.'}\n\n/inbox`);
+      const stats = (saved as any).stats || {};
+      const lines = saved.slice(0, 25).map((s: any) =>
+        `${s.is_electoral ? '🗳 ' : ''}#${s.story_number} · ${s.priority} · R ${pct(s.relevance_score)} · C ${pct(s.confidence_score)}\n${s.title}`
+      );
+
+      await replyChunks(
+        ctx,
+        `CORRIDA COMPLETADA\n` +
+        `Ventana: ${stats.lookback_hours ?? '-'} h\n` +
+        `Bloques consultados: ${stats.lanes_attempted ?? '-'}\n` +
+        `Resultados brutos: ${stats.raw_results ?? '-'}\n` +
+        `Duplicados eliminados: ${stats.duplicates_removed ?? '-'}\n` +
+        `Ya existentes descartados: ${stats.existing_removed ?? '-'}\n` +
+        `Fuentes únicas: ${stats.unique_sources ?? '-'}\n` +
+        `Stories creadas: ${saved.length}\n\n` +
+        `${lines.join('\n\n') || 'No se encontraron Stories con suficiente relevancia.'}\n\n/inbox`
+      );
     } catch (e: any) {
       await ctx.reply(`La corrida fallo: ${e.message}`);
     }
