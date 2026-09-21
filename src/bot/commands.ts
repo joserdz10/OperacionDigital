@@ -17,7 +17,11 @@ const discoveryJobs = new Map<number, AbortController>();
 
 function args(ctx: Context): string[] {
   const text = ctx.message && 'text' in ctx.message ? ctx.message.text || '' : '';
-  return text.trim().split(/\s+/).slice(1);
+  return text
+    .trim()
+    .split(/\s+/)
+    .slice(1)
+    .map((value) => /^#\d+$/.test(value) ? value.slice(1) : value);
 }
 
 async function replyChunks(ctx: Context, text: string) {
