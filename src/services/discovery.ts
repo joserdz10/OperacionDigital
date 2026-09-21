@@ -110,7 +110,8 @@ const STORY_SHAPE = `{
   ]
 }`;
 
-export async function runDiscovery(territoryCode: string, identityCode: string, period = '6h') {
+export async function runDiscovery(territoryCode: string, identityCode: string, period = '6h', signal?: AbortSignal) {
+  if (signal?.aborted) throw new Error('DISCOVERY_CANCELLED');
   const brain = await one<any>('SELECT id,name,timezone FROM territory_brains WHERE code=$1', [territoryCode]);
   const identity = await one<any>('SELECT id,name FROM identities WHERE code=$1', [identityCode]);
   if (!brain || !identity) throw new Error('Active State Brain or identity not found.');
@@ -230,6 +231,7 @@ ${STORY_SHAPE}
 Return up to ${resultsPerLane} distinct stories for this lane. If fewer credible current stories exist, return fewer. Never invent filler.`;
 
   async function searchLane(lane: { name: string; focus: string }) {
+    if (signal?.aborted) throw new Error('DISCOVERY_CANCELLED');
     const response = await openai.responses.create({
       model: env.openaiModel,
       tools: [{ type: 'web_search' } as any],
@@ -239,7 +241,7 @@ DISCOVERY LANE: ${lane.name}
 FOCUS: ${lane.focus}
 
 Search broadly now and return the JSON.`,
-    });
+    }, { signal });
 
     const parsed = extractJson(response.output_text || '{"stories":[]}');
     const found = Array.isArray(parsed.stories) ? parsed.stories : [];
@@ -253,8 +255,11 @@ Search broadly now and return the JSON.`,
   const laneErrors: Array<{ lane: string; error: string }> = [];
 
   for (let i = 0; i < lanes.length; i += concurrency) {
+    if (signal?.aborted) throw new Error('DISCOVERY_CANCELLED');
     const batch = lanes.slice(i, i + concurrency);
     const settled = await Promise.allSettled(batch.map(searchLane));
+
+    if (signal?.aborted) throw new Error('DISCOVERY_CANCELLED');
 
     settled.forEach((result, index) => {
       if (result.status === 'fulfilled') raw.push(...result.value);
@@ -312,6 +317,7 @@ Search broadly now and return the JSON.`,
   const saved: any[] = [];
 
   for (const s of selected) {
+    if (signal?.aborted) throw new Error('DISCOVERY_CANCELLED');
     const story = await one<any>(`
       INSERT INTO stories(origin_brain_id,scope,title,summary,status,importance_score,confidence_score,raw_payload)
       VALUES($1,$2,$3,$4,'ready',$5,$6,$7::jsonb)
