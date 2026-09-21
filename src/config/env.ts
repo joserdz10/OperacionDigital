@@ -37,6 +37,10 @@ export const env = {
   googleDrivePublishedFolderId: optional('GOOGLE_DRIVE_PUBLISHED_FOLDER_ID'),
   googleDriveQueueSheetId: optional('GOOGLE_DRIVE_QUEUE_SHEET_ID'),
   googleDriveQueueSheetTab: optional('GOOGLE_DRIVE_QUEUE_SHEET_TAB', 'COLA'),
+
+  metaGraphVersion: optional('META_GRAPH_VERSION', 'v26.0'),
+  facebookNortePageId: optional('FB_NORTE_PAGE_ID'),
+  facebookNortePageAccessToken: optional('FB_NORTE_PAGE_ACCESS_TOKEN'),
 };
 
 export function validateGoogleConfig() {
