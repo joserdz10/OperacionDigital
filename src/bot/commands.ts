@@ -375,21 +375,22 @@ export function registerCommands(bot: Bot) {
     try {
       const saved = await runDiscovery(session.territory_code, session.identity_code, period);
       const stats = (saved as any).stats || {};
-      const lines = saved.slice(0, 25).map((s: any) =>
+      const previewLimit = 8;
+      const lines = saved.slice(0, previewLimit).map((s: any) =>
         `${s.is_electoral ? '🗳 ' : ''}#${s.story_number} · ${s.priority} · R ${pct(s.relevance_score)} · C ${pct(s.confidence_score)}\n${s.title}`
       );
+      const remaining = Math.max(0, saved.length - previewLimit);
 
-      await replyChunks(
-        ctx,
+      await ctx.reply(
         `CORRIDA COMPLETADA\n` +
         `Ventana: ${stats.lookback_hours ?? '-'} h\n` +
-        `Bloques consultados: ${stats.lanes_attempted ?? '-'}\n` +
         `Resultados brutos: ${stats.raw_results ?? '-'}\n` +
         `Duplicados eliminados: ${stats.duplicates_removed ?? '-'}\n` +
-        `Ya existentes descartados: ${stats.existing_removed ?? '-'}\n` +
-        `Fuentes únicas: ${stats.unique_sources ?? '-'}\n` +
-        `Stories creadas: ${saved.length}\n\n` +
-        `${lines.join('\n\n') || 'No se encontraron Stories con suficiente relevancia.'}\n\n/inbox`
+        `Stories guardadas: ${saved.length}\n\n` +
+        `TOP ${Math.min(previewLimit, saved.length)}\n\n` +
+        `${lines.join('\n\n') || 'No se encontraron Stories con suficiente relevancia.'}` +
+        `${remaining ? `\n\n+${remaining} Stories más guardadas en el inbox.` : ''}` +
+        `\n\nUsa /inbox para ver el resto.`
       );
     } catch (e: any) {
       await ctx.reply(`La corrida fallo: ${e.message}`);
