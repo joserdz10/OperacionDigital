@@ -13,6 +13,8 @@ import { env } from '../config/env.js';
 import { googleAuthorizationUrl, googleConnectionStatus, markProductionPublished, saveProductionPiece } from '../services/google-drive.js';
 import { facebookConfigured, publishFacebookPhotoPost } from '../services/facebook.js';
 
+const discoveryJobs = new Map<number, AbortController>();
+
 function args(ctx: Context): string[] {
   const text = ctx.message && 'text' in ctx.message ? ctx.message.text || '' : '';
   return text.trim().split(/\s+/).slice(1);
@@ -364,37 +366,73 @@ export function registerCommands(bot: Bot) {
   });
 
   bot.command('corrida', async (ctx) => {
-    const session = await getSession(ctx.chat.id);
+    const chatId = ctx.chat.id;
+    const session = await getSession(chatId);
     const period = args(ctx)[0] || '6h';
+
+    if (discoveryJobs.has(chatId)) {
+      return ctx.reply('Ya hay una corrida en curso en este chat. Usa /cancelar para detenerla antes de iniciar otra.');
+    }
+
+    const controller = new AbortController();
+    discoveryJobs.set(chatId, controller);
+
     await ctx.reply(
       `Discovery amplio iniciado: ${period}\n` +
       `State Brain: ${session.territory_code}\n` +
       `Identity: ${session.identity_code}\n` +
-      `Buscando en múltiples frentes, verificando y deduplicando...`
+      `La búsqueda seguirá en segundo plano. Puedes usar /story, /pieza, /inbox u otros comandos mientras termina.\n` +
+      `Para detenerla: /cancelar`
     );
-    try {
-      const saved = await runDiscovery(session.territory_code, session.identity_code, period);
-      const stats = (saved as any).stats || {};
-      const previewLimit = 8;
-      const lines = saved.slice(0, previewLimit).map((s: any) =>
-        `${s.is_electoral ? '🗳 ' : ''}#${s.story_number} · ${s.priority} · R ${pct(s.relevance_score)} · C ${pct(s.confidence_score)}\n${s.title}`
-      );
-      const remaining = Math.max(0, saved.length - previewLimit);
 
-      await ctx.reply(
-        `CORRIDA COMPLETADA\n` +
-        `Ventana: ${stats.lookback_hours ?? '-'} h\n` +
-        `Resultados brutos: ${stats.raw_results ?? '-'}\n` +
-        `Duplicados eliminados: ${stats.duplicates_removed ?? '-'}\n` +
-        `Stories guardadas: ${saved.length}\n\n` +
-        `TOP ${Math.min(previewLimit, saved.length)}\n\n` +
-        `${lines.join('\n\n') || 'No se encontraron Stories con suficiente relevancia.'}` +
-        `${remaining ? `\n\n+${remaining} Stories más guardadas en el inbox.` : ''}` +
-        `\n\nUsa /inbox para ver el resto.`
-      );
-    } catch (e: any) {
-      await ctx.reply(`La corrida fallo: ${e.message}`);
-    }
+    void (async () => {
+      try {
+        const saved = await runDiscovery(
+          session.territory_code,
+          session.identity_code,
+          period,
+          controller.signal
+        );
+
+        if (controller.signal.aborted) return;
+
+        const stats = (saved as any).stats || {};
+        const previewLimit = 8;
+        const lines = saved.slice(0, previewLimit).map((s: any) =>
+          `${s.is_electoral ? '🗳 ' : ''}#${s.story_number} · ${s.priority} · R ${pct(s.relevance_score)} · C ${pct(s.confidence_score)}\n${s.title}`
+        );
+        const remaining = Math.max(0, saved.length - previewLimit);
+
+        await ctx.reply(
+          `CORRIDA COMPLETADA\n` +
+          `Ventana: ${stats.lookback_hours ?? '-'} h\n` +
+          `Resultados brutos: ${stats.raw_results ?? '-'}\n` +
+          `Duplicados eliminados: ${stats.duplicates_removed ?? '-'}\n` +
+          `Stories guardadas: ${saved.length}\n\n` +
+          `TOP ${Math.min(previewLimit, saved.length)}\n\n` +
+          `${lines.join('\n\n') || 'No se encontraron Stories con suficiente relevancia.'}` +
+          `${remaining ? `\n\n+${remaining} Stories más guardadas en el inbox.` : ''}` +
+          `\n\nUsa /inbox para ver el resto.`
+        );
+      } catch (e: any) {
+        if (controller.signal.aborted || /DISCOVERY_CANCELLED|aborted|abort/i.test(String(e?.message || e))) {
+          await ctx.reply('🛑 Corrida cancelada.');
+        } else {
+          await ctx.reply(`La corrida fallo: ${e.message}`);
+        }
+      } finally {
+        if (discoveryJobs.get(chatId) === controller) discoveryJobs.delete(chatId);
+      }
+    })();
+  });
+
+  bot.command('cancelar', async (ctx) => {
+    const controller = discoveryJobs.get(ctx.chat.id);
+    if (!controller) return ctx.reply('No hay una corrida activa en este chat.');
+
+    controller.abort();
+    discoveryJobs.delete(ctx.chat.id);
+    await ctx.reply('🛑 Cancelación solicitada. La búsqueda actual se detendrá y el bot seguirá disponible.');
   });
 
   bot.command('inbox', async (ctx) => {
