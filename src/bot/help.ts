@@ -4,6 +4,7 @@ export const commandMenu = [
   { command: 'story', description: 'Abrir una Story por numero' },
   { command: 'generar', description: 'Generar contenido de una Story' },
   { command: 'pieza', description: 'Generar preview de pieza para revision' },
+  { command: 'publicar', description: 'Publicar pieza aprobada en Facebook' },
   { command: 'publicada', description: 'Marcar pieza como publicada' },
   { command: 'drive', description: 'Conectar o revisar Google Drive' },
   { command: 'elecciones', description: 'Abrir Election Desk' },
@@ -55,7 +56,7 @@ Produccion:
 /pieza 12 breaking - urgente 1080x1350
 /pieza 12 quote - cita 1080x1350
 /pieza 12 carousel - carrusel 1080x1350 por slide
-/publicada 12 story - marcar como publicada y mover a PUBLICADAS
+/publicar 12 facebook - publicar el post aprobado directamente en Facebook\n/publicada 12 story - marcar como publicada y mover a PUBLICADAS
 
 NUEVO FLUJO:
 1) /pieza genera una PREVIEW en Telegram
