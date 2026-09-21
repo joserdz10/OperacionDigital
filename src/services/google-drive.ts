@@ -134,13 +134,35 @@ export async function completeGoogleOAuth(code: string) {
 
 export async function googleConnectionStatus() {
   if (!env.googleDriveEnabled) return { enabled: false, connected: false };
+
   const token = await one<TokenRow>(`SELECT * FROM integration_tokens WHERE provider='google_drive'`);
-  return {
-    enabled: true,
-    connected: Boolean(token?.refresh_token),
-    expiresAt: token?.expires_at || null,
-    scope: token?.scope || null,
-  };
+  if (!token?.refresh_token) {
+    return {
+      enabled: true,
+      connected: false,
+      expiresAt: token?.expires_at || null,
+      scope: token?.scope || null,
+      error: 'Google Drive requiere autorización.',
+    };
+  }
+
+  try {
+    await accessToken();
+    return {
+      enabled: true,
+      connected: true,
+      expiresAt: token?.expires_at || null,
+      scope: token?.scope || null,
+    };
+  } catch (e: any) {
+    return {
+      enabled: true,
+      connected: false,
+      expiresAt: token?.expires_at || null,
+      scope: token?.scope || null,
+      error: e?.message || String(e),
+    };
+  }
 }
 
 async function refreshAccessToken(refreshToken: string) {
@@ -156,7 +178,17 @@ async function refreshAccessToken(refreshToken: string) {
     body,
   });
   const data: any = await response.json();
-  if (!response.ok) throw new Error(data?.error_description || data?.error || `Google token refresh failed (${response.status})`);
+  if (!response.ok) {
+    if (data?.error === 'invalid_grant') {
+      await query(
+        `UPDATE integration_tokens
+         SET access_token=NULL, refresh_token=NULL, expires_at=NULL, updated_at=now()
+         WHERE provider='google_drive'`
+      );
+      throw new Error('La autorización de Google Drive expiró o fue revocada. Usa /drive para volver a conectarla.');
+    }
+    throw new Error(data?.error_description || data?.error || `Google token refresh failed (${response.status})`);
+  }
   const expiresAt = new Date(Date.now() + Number(data.expires_in || 3600) * 1000);
   await query(
     `UPDATE integration_tokens SET access_token=$1,expires_at=$2,scope=COALESCE($3,scope),updated_at=now() WHERE provider='google_drive'`,
