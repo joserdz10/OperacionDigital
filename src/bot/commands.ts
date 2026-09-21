@@ -95,8 +95,16 @@ function pieceKeyboard(storyNumber: number | string) {
 }
 
 function reviewKeyboard(storyNumber: number | string, pieceTypeKey: string) {
-  return new InlineKeyboard()
-    .text('✅ Aprobar y enviar a Drive', `approve:${storyNumber}:${pieceTypeKey}`)
+  const keyboard = new InlineKeyboard()
+    .text('✅ Aprobar y enviar a Drive', `approve:${storyNumber}:${pieceTypeKey}`);
+
+  if (pieceTypeKey === 'fb') {
+    keyboard
+      .row()
+      .text('📘 Publicar en Facebook', `publishnow:${storyNumber}:fb`);
+  }
+
+  return keyboard
     .row()
     .text('🔁 Regenerar pieza', `regenpiece:${storyNumber}:${pieceTypeKey}`)
     .text('✍️ Regenerar copy', `regencopy:${storyNumber}:${pieceTypeKey}`)
@@ -696,6 +704,69 @@ export function registerCommands(bot: Bot) {
         `${e?.message || e}\n\n` +
         `La preview sigue disponible en Telegram. Usa /drive para revisar la conexión.`
       );
+    }
+  });
+
+  bot.callbackQuery(/^publishnow:(\d+):fb$/i, async (ctx) => {
+    const [, ref] = ctx.match as RegExpMatchArray;
+    await safeAnswerCallbackQuery(ctx, { text: 'Preparando publicación...' });
+
+    const session = await getSession(ctx.chat!.id);
+    const story = await findStory(session.identity_code, ref, session.last_story_id);
+    if (!story) return ctx.reply('Story no encontrada.');
+
+    if (!facebookConfigured(session.identity_code)) {
+      return ctx.reply(`Facebook no está configurado para la identidad ${session.identity_code}.`);
+    }
+
+    if (!env.googleDriveEnabled) {
+      return ctx.reply('Google Drive está deshabilitado. Para publicar desde la preview, primero debe estar habilitado el flujo de aprobación en Drive.');
+    }
+
+    try {
+      let exportRow = await one<any>(
+        `SELECT * FROM production_exports
+         WHERE story_id=$1 AND identity_id=$2 AND format='fb'
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [story.id, story.identity_id]
+      );
+
+      if (!exportRow) {
+        const selection = await resolvePieceSelection(story, 'fb');
+        if (!selection?.cp) {
+          return ctx.reply('No encontré la pieza FB generada. Usa /generar y /pieza primero.');
+        }
+
+        const rendered = await renderPiecePng({
+          story,
+          contentPiece: selection.cp,
+          pieceType: 'fb',
+        });
+
+        await saveProductionPiece({
+          story,
+          pieceType: 'fb',
+          pieceLabel: selection.pieceType.label,
+          imageBuffer: rendered.buffer,
+          imageFilename: rendered.filename,
+          headline: selection.cp.headline || story.title,
+        });
+
+        await markPieceWorkflowStatus(story, selection.pieceType, 'approved');
+
+        exportRow = await one<any>(
+          `SELECT * FROM production_exports
+           WHERE story_id=$1 AND identity_id=$2 AND format='fb'
+           ORDER BY created_at DESC
+           LIMIT 1`,
+          [story.id, story.identity_id]
+        );
+      }
+
+      await publishApprovedFacebookPost(ctx, story, session.identity_code);
+    } catch (e: any) {
+      await ctx.reply(`No pude publicar en Facebook: ${e?.message || e}`);
     }
   });
 
