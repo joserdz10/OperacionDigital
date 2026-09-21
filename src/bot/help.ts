@@ -1,5 +1,6 @@
 export const commandMenu = [
   { command: 'corrida', description: 'Buscar y clasificar noticias' },
+  { command: 'cancelar', description: 'Cancelar la corrida activa' },
   { command: 'inbox', description: 'Ver Story Inbox' },
   { command: 'story', description: 'Abrir una Story por numero' },
   { command: 'generar', description: 'Generar contenido de una Story' },
@@ -26,6 +27,7 @@ export const helpText = `AI MEDIA NETWORK OPERATOR v0.6.2
 
 Comandos principales:
 /corrida 6h - Discovery real del periodo
+/cancelar - Cancelar la corrida activa
 /inbox - Story Inbox
 /story 12 - Analisis completo
 /generar 12 todo - Paquete editorial
