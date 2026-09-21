@@ -225,7 +225,13 @@ async function publishApprovedFacebookPost(ctx: Context, story: any, identityCod
     driveWarning = `⚠️ Facebook publicó, pero no pude completar el movimiento en Drive: ${e?.message || e}`;
   }
 
-  await markPieceWorkflowStatus(story, pieceType, 'published');
+  await query(
+    `UPDATE content_pieces
+     SET status='published', updated_at=now()
+     WHERE story_id=$1 AND identity_id=$2
+       AND ((content_type='graphic' AND format = ANY($3::text[])) OR content_type='facebook')`,
+    [story.id, story.identity_id, ['fb', 'post']]
+  );
 
   await ctx.reply(
     `✅ PUBLICADO EN FACEBOOK\n\n` +
