@@ -11,6 +11,7 @@ import { normalize } from '../config/network.js';
 import { renderPiecePng } from '../services/render.js';
 import { env } from '../config/env.js';
 import { googleAuthorizationUrl, googleConnectionStatus, markProductionPublished, saveProductionPiece } from '../services/google-drive.js';
+import { facebookConfigured, publishFacebookPhotoPost } from '../services/facebook.js';
 
 function args(ctx: Context): string[] {
   const text = ctx.message && 'text' in ctx.message ? ctx.message.text || '' : '';
@@ -99,8 +100,11 @@ function reviewKeyboard(storyNumber: number | string, pieceTypeKey: string) {
 }
 
 function publicationKeyboard(storyNumber: number | string, pieceTypeKey: string) {
-  return new InlineKeyboard()
-    .text('✅ Marcar como PUBLICADA', `published:${storyNumber}:${pieceTypeKey}`);
+  const keyboard = new InlineKeyboard();
+  if (pieceTypeKey === 'fb') {
+    keyboard.text('📘 Publicar en Facebook', `publishfb:${storyNumber}:${pieceTypeKey}`).row();
+  }
+  return keyboard.text('✅ Marcar como PUBLICADA', `published:${storyNumber}:${pieceTypeKey}`);
 }
 
 async function resolvePieceSelection(story: any, requestedType?: string | null): Promise<PieceSelection | null> {
@@ -142,6 +146,95 @@ async function markPieceWorkflowStatus(story: any, pieceType: PieceOption, statu
          OR content_type IN ('facebook','instagram','x')
        )`,
     [status, story.id, story.identity_id, pieceType.contentType, candidates]
+  );
+}
+
+async function publishApprovedFacebookPost(ctx: Context, story: any, identityCode: string) {
+  const pieceType = resolvePieceType('fb');
+  if (!pieceType) throw new Error('No pude resolver el formato Facebook.');
+
+  if (!facebookConfigured(identityCode)) {
+    throw new Error(`Facebook no está configurado para la identidad ${identityCode}.`);
+  }
+
+  const exportRow = await one<any>(
+    `SELECT * FROM production_exports
+     WHERE story_id=$1 AND identity_id=$2 AND format='fb'
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [story.id, story.identity_id]
+  );
+
+  if (!exportRow) {
+    throw new Error('Primero aprueba la pieza FB para guardarla en PENDIENTES.');
+  }
+
+  if (exportRow.metadata?.facebook_post_id || exportRow.metadata?.facebook_photo_id) {
+    await ctx.reply(
+      `ℹ️ Esta pieza ya fue enviada a Facebook.\n\n` +
+      `Story #${story.story_number}\n` +
+      `Post ID: ${exportRow.metadata?.facebook_post_id || '-'}\n` +
+      `Photo ID: ${exportRow.metadata?.facebook_photo_id || '-'}`
+    );
+    return;
+  }
+
+  if (!['pending', 'pending_publication'].includes(String(exportRow.status))) {
+    throw new Error(`La exportación no está pendiente de publicación (estado: ${exportRow.status}).`);
+  }
+
+  const selection = await resolvePieceSelection(story, 'fb');
+  if (!selection?.cp) throw new Error('No encontré la pieza FB generada.');
+
+  const rendered = await renderPiecePng({
+    story,
+    contentPiece: selection.cp,
+    pieceType: 'fb',
+  });
+  const copy = await proposedCopyText(story, 'fb', selection.cp.headline || story.title);
+
+  const result = await publishFacebookPhotoPost({
+    identityCode,
+    message: copy,
+    imageBuffer: rendered.buffer,
+    filename: rendered.filename,
+    mimeType: 'image/png',
+  });
+
+  await query(
+    `UPDATE production_exports
+     SET metadata = COALESCE(metadata,'{}'::jsonb) || $1::jsonb
+     WHERE id=$2`,
+    [
+      JSON.stringify({
+        facebook_post_id: result.postId || null,
+        facebook_photo_id: result.id || null,
+        facebook_published_at: new Date().toISOString(),
+      }),
+      exportRow.id,
+    ]
+  );
+
+  let driveWarning = '';
+  try {
+    const published = await markProductionPublished({ story, pieceType: 'fb' });
+    driveWarning = published.queueUpdated
+      ? '📋 COLA_DE_PUBLICACION actualizada'
+      : `⚠️ Facebook publicó, pero la cola no se actualizó: ${published.queueError || 'error desconocido'}`;
+  } catch (e: any) {
+    driveWarning = `⚠️ Facebook publicó, pero no pude completar el movimiento en Drive: ${e?.message || e}`;
+  }
+
+  await markPieceWorkflowStatus(story, pieceType, 'published');
+
+  await ctx.reply(
+    `✅ PUBLICADO EN FACEBOOK\n\n` +
+    `Story #${story.story_number}\n` +
+    `${story.identity_name}\n` +
+    `Formato: Post Facebook / Feed\n\n` +
+    `Post ID: ${result.postId || '-'}\n` +
+    `Photo ID: ${result.id || '-'}\n\n` +
+    driveWarning
   );
 }
 
@@ -421,6 +514,25 @@ export function registerCommands(bot: Bot) {
     await sendPieceSpec(ctx, story, a[1]);
   });
 
+  bot.command('publicar', async (ctx) => {
+    const session = await getSession(ctx.chat.id);
+    const a = args(ctx);
+    const story = await findStory(session.identity_code, a[0], session.last_story_id);
+    if (!story) return ctx.reply('Story no encontrada. Uso: /publicar <story> facebook');
+
+    const destination = normalize(a[1] || 'facebook');
+    if (!['facebook', 'fb', 'post'].includes(destination)) {
+      return ctx.reply('Por ahora /publicar admite Facebook Post. Ejemplo: /publicar 12 facebook');
+    }
+
+    try {
+      await ctx.reply(`Publicando Story #${story.story_number} en Facebook...`);
+      await publishApprovedFacebookPost(ctx, story, session.identity_code);
+    } catch (e: any) {
+      await ctx.reply(`No pude publicar en Facebook: ${e?.message || e}`);
+    }
+  });
+
   bot.command('publicada', async (ctx) => {
     const session = await getSession(ctx.chat.id);
     const a = args(ctx);
@@ -506,7 +618,7 @@ export function registerCommands(bot: Bot) {
         `☁️ Guardada en Google Drive\n` +
         `📁 Carpeta: ${saved.folderUrl}\n` +
         `${saved.queueUpdated ? '📋 Agregada a COLA_DE_PUBLICACION' : `⚠️ Guardada en Drive, pero la cola no se actualizó: ${saved.queueError || 'error desconocido'}`}\n\n` +
-        `Cuando el equipo la publique en redes, marca el estado aquí.`,
+        `Ya puedes publicarla directamente en Facebook o marcarla manualmente como publicada.`,
         { reply_markup: publicationKeyboard(story.story_number, selection.pieceType.key) }
       );
     } catch (e: any) {
@@ -515,6 +627,20 @@ export function registerCommands(bot: Bot) {
         `${e?.message || e}\n\n` +
         `La preview sigue disponible en Telegram. Usa /drive para revisar la conexión.`
       );
+    }
+  });
+
+  bot.callbackQuery(/^publishfb:(\d+):fb$/i, async (ctx) => {
+    const [, ref] = ctx.match as RegExpMatchArray;
+    await safeAnswerCallbackQuery(ctx, { text: 'Publicando en Facebook...' });
+    const session = await getSession(ctx.chat!.id);
+    const story = await findStory(session.identity_code, ref, session.last_story_id);
+    if (!story) return ctx.reply('Story no encontrada.');
+
+    try {
+      await publishApprovedFacebookPost(ctx, story, session.identity_code);
+    } catch (e: any) {
+      await ctx.reply(`No pude publicar en Facebook: ${e?.message || e}`);
     }
   });
 
