@@ -86,13 +86,15 @@ export function facebookConfigured(identityCode: string) {
   }
 }
 
-function facebookApiError(data: any, status: number) {
-  return (
+function facebookApiError(data: any, status: number, accessToken: string) {
+  const message = String(
     data?.error?.error_user_msg ||
     data?.error?.message ||
     data?.raw ||
     `Meta Graph API error ${status}`
   );
+
+  return accessToken ? message.split(accessToken).join('[REDACTED]') : message;
 }
 
 export async function publishFacebookPhotoPost(params: {
@@ -131,7 +133,7 @@ export async function publishFacebookPhotoPost(params: {
   }
 
   if (!response.ok) {
-    throw new Error(facebookApiError(data, response.status));
+    throw new Error(facebookApiError(data, response.status, accessToken));
   }
 
   return {
