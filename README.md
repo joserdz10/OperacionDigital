@@ -157,3 +157,29 @@ After deploy:
 4. Run `/pieza <story> <format>`; Telegram shows the preview and proposed copy. Nothing is sent to Drive yet.
 5. Press `✅ Aprobar y enviar a Drive`; only then the PNG, copy and metadata are stored in `PENDIENTES` and the queue Sheet is updated.
 6. After a human publishes the content, press `✅ Marcar como PUBLICADA` or run `/publicada <story> <format>`. The piece folder is moved to `PUBLICADAS`, the queue state becomes `PUBLICADA`, and the publication timestamp is recorded.
+
+
+## Facebook multi-identidad
+
+La publicación directa de Facebook se resuelve por `identityCode` sin lógica específica por marca.
+
+Configura en Railway una sola variable secreta `FACEBOOK_PAGES_JSON` con un mapa JSON:
+
+```json
+{
+  "NL-01": {
+    "pageId": "FACEBOOK_PAGE_ID",
+    "accessToken": "FACEBOOK_PAGE_ACCESS_TOKEN"
+  },
+  "HGO-01": {
+    "pageId": "FACEBOOK_PAGE_ID",
+    "accessToken": "FACEBOOK_PAGE_ACCESS_TOKEN"
+  }
+}
+```
+
+- Los códigos de identidad se normalizan a mayúsculas.
+- Cada identidad requiere `pageId` y `accessToken`.
+- Los tokens deben permanecer únicamente en variables secretas de Railway; nunca en Git.
+- `FB_NORTE_PAGE_ID` y `FB_NORTE_PAGE_ACCESS_TOKEN` se conservan temporalmente como fallback de compatibilidad para `NL-01`.
+- El flujo existente `/publicar <story> facebook` y los botones de publicación siguen usando la identidad activa del chat.
